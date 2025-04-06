@@ -31,9 +31,15 @@ def render_data_input():
             query_text = st.text_area("Enter your query:", "Analyze 10 social media posts for sentiment and themes.")
     
         # Image configuration section
-        st.markdown("### Image Configuration (Optional)")
+        st.markdown("### Image Configuration")
         image_mode = st.radio("Image Mode", ["No Images", "Single Image for All Rows", "Image Paths in CSV"], horizontal=True)
-        
+        st.info("""
+                🖼️ **Multimodal Support**:
+- If you specified image path columns, the system will automatically load images from those paths for each row.     
+- If you uploaded a single image, it will be used for all rows in your dataset.    
+      
+The prompt below will be sent along with any images to multimodal-capable models.    
+""")
         image_data = None
         image_path_columns = []
         

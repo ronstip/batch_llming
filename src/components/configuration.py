@@ -96,20 +96,10 @@ def render_analysis_config():
     # Prompt Configuration
     st.subheader("Prompt Configuration")
     
-    # Inform users about multimodal capabilities
-    st.info("""
-    🖼️ **Multimodal Support**: 
-    
-    - If you specified image path columns, the system will automatically load images from those paths for each row.
-    - If you uploaded a single image, it will be used for all rows in your dataset.
-    
-    The prompt below will be sent along with any images to multimodal-capable models.
-    """)
-    
     # Improved prompt template with simpler format
     prompt_text = st.text_area(
         label="Enter your prompt template:",
-        height=500,
+        height=300,
         value="""Analyze the following social media post:
 
 Title: {title}
@@ -131,9 +121,9 @@ If there's an image included with this post, analyze the visual content and how 
     default_fields = [
         {"key": "sentiment", "type": "enum", "description": "The sentiment of the post", "options": ["positive", "negative", "neutral"]},
         {"key": "themes", "type": "str", "description": "Main themes in the post separated by commas"},
-        {"key": "target_audience", "type": "str", "description": "Description of the target audience"},
-        {"key": "engagement_potential", "type": "enum", "description": "Expected engagement level", "options": ["high", "medium", "low"]},
-        {"key": "image_description", "type": "str", "description": "Description of the image content if an image is included"}
+        # {"key": "target_audience", "type": "str", "description": "Description of the target audience"},
+        # {"key": "engagement_potential", "type": "enum", "description": "Expected engagement level", "options": ["high", "medium", "low"]},
+        # {"key": "image_description", "type": "str", "description": "Description of the image content if an image is included"}
     ]
     
     # Initialize schema fields in session state if not present
@@ -157,53 +147,58 @@ If there's an image included with this post, analyze the visual content and how 
             # Rerun to show the new field
             st.rerun()
         
+        # Create two columns for field display
+        field_columns = st.columns(2)
+        
         # Iterate through existing fields
         fields_to_remove = []
         for i, field in enumerate(st.session_state.schema_fields):
-            st.markdown(f"### Field {i+1}")
-            
-            # Create a unique key for each input field
-            key_prefix = f"field_{i}_"
-            
-            # Field key
-            field["key"] = st.text_input(
-                "Field Key (no spaces, lowercase)", 
-                value=field["key"], 
-                key=f"{key_prefix}key"
-            )
-            
-            # Field type
-            field["type"] = st.selectbox(
-                "Field Type", 
-                ["str", "int", "float", "enum"], 
-                index=["str", "int", "float", "enum"].index(field["type"]) if field["type"] in ["str", "int", "float", "enum"] else 0,
-                key=f"{key_prefix}type"
-            )
-            
-            # Field description
-            field["description"] = st.text_input(
-                "Description", 
-                value=field["description"], 
-                key=f"{key_prefix}desc"
-            )
-            
-            # If enum type, show options input
-            if field["type"] == "enum":
-                options_str = st.text_input(
-                    "Options (comma separated)", 
-                    value=", ".join(field.get("options", [])), 
-                    key=f"{key_prefix}options"
+            # Alternate between left and right columns
+            with field_columns[i % 2]:
+                st.markdown(f"### Field {i+1}")
+                
+                # Create a unique key for each input field
+                key_prefix = f"field_{i}_"
+                
+                # Field key
+                field["key"] = st.text_input(
+                    "Field Key (no spaces, lowercase)", 
+                    value=field["key"], 
+                    key=f"{key_prefix}key"
                 )
-                field["options"] = [opt.strip() for opt in options_str.split(",") if opt.strip()]
-        
-            # Remove button with unique key
-            remove_button_id = f"remove_{i}_{field.get('key', '')}"
-            if st.button("🗑️ Remove", key=remove_button_id):
-                fields_to_remove.append(i)
-                # Set a flag to rerun after removing fields
-                st.session_state.need_rerun = True
+                
+                # Field type
+                field["type"] = st.selectbox(
+                    "Field Type", 
+                    ["str", "int", "float", "enum"], 
+                    index=["str", "int", "float", "enum"].index(field["type"]) if field["type"] in ["str", "int", "float", "enum"] else 0,
+                    key=f"{key_prefix}type"
+                )
+                
+                # Field description
+                field["description"] = st.text_input(
+                    "Description", 
+                    value=field["description"], 
+                    key=f"{key_prefix}desc"
+                )
+                
+                # If enum type, show options input
+                if field["type"] == "enum":
+                    options_str = st.text_input(
+                        "Options (comma separated)", 
+                        value=", ".join(field.get("options", [])), 
+                        key=f"{key_prefix}options"
+                    )
+                    field["options"] = [opt.strip() for opt in options_str.split(",") if opt.strip()]
             
-            st.markdown("---")
+                # Remove button with unique key
+                remove_button_id = f"remove_{i}_{field.get('key', '')}"
+                if st.button("🗑️ Remove", key=remove_button_id):
+                    fields_to_remove.append(i)
+                    # Set a flag to rerun after removing fields
+                    st.session_state.need_rerun = True
+                
+                st.markdown("---")
         
         # Remove marked fields (in reverse to avoid index issues)
         if fields_to_remove:
