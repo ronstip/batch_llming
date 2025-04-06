@@ -6,3 +6,6 @@ langchain
 langchain-openai
 langchain-community
 Pillow
+pydantic
+requests
+wordcloud
