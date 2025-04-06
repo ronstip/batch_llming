@@ -39,9 +39,7 @@ def render_sidebar_config():
         
         # Show multimodal information if a multimodal model is selected
         is_multimodal = model_options[selected_index]["multimodal"]
-        if is_multimodal:
-            st.success("✅ Selected model supports multimodal (text + image) input")
-            
+        if is_multimodal:            
             # Add image detail level option for multimodal models
             st.markdown("#### 🖼️ Image Settings")
             image_detail = st.selectbox(
