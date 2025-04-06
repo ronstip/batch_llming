@@ -103,14 +103,6 @@ def render_analysis_config():
         value="""Analyze the following social media post:
 
 Title: {title}
-
-Please provide the following analysis:
-- Overall sentiment (positive, negative, or neutral)
-- Key themes or topics
-- Target audience
-- Engagement potential (high, medium, low)
-
-If there's an image included with this post, analyze the visual content and how it relates to the text.
 """
     )
     

@@ -969,9 +969,6 @@ def main():
     # Display results if available
     with results_tab:
         if hasattr(st.session_state, 'results_df') and not st.session_state.results_df.empty:
-            # Add refresh button for results
-            if st.button("🔄 Refresh Results View"):
-                st.rerun()
                 
             # Display results and visualizations
             display_results(st.session_state.results_df, fields)

@@ -8,6 +8,7 @@ import os
 from PIL import Image
 import io
 import re
+import numpy as np
 
 def display_results(results_df, fields):
     """Display the analysis results in a dashboard format."""
@@ -252,9 +253,24 @@ def create_visualizations(df, fields):
     # Modern color palette
     colors = ['#1a73e8', '#34a853', '#fbbc04', '#ea4335', '#9c27b0', '#3f51b5', '#03a9f4', '#009688']
     
-    # Create a tabbed interface for different visualization categories
-    viz_tabs = st.tabs(["Categorical", "Numerical", "Text Analysis"])
+    # Clean the dataframe - handle nulls and convert types appropriately
+    df_viz = df.copy()
     
+    # Helper function to detect if a column has numeric data despite being object type
+    def is_numeric_column(column):
+        try:
+            # Try to convert to numeric, but handle mixed data gracefully
+            pd.to_numeric(df_viz[column], errors='coerce')
+            # If less than 30% of values are NaN after conversion, consider it numeric
+            null_pct = df_viz[column].isna().mean()
+            return null_pct < 0.3
+        except:
+            return False
+    
+    # Create a tabbed interface for different visualization categories
+    viz_tabs = st.tabs(["Categorical", "Numerical", "Relationships", "Text Analysis", "Advanced"])
+    
+    # === CATEGORICAL VISUALIZATIONS ===
     with viz_tabs[0]:
         st.markdown("### Categorical Distributions")
         
@@ -265,6 +281,13 @@ def create_visualizations(df, fields):
         if not categorical_fields:
             st.info("No categorical fields found in the data")
         else:
+            # Add visualization type selector
+            viz_type = st.radio(
+                "Chart type:",
+                ["Bar Chart", "Pie Chart", "Donut Chart"],
+                horizontal=True
+            )
+            
             # Create grid layout
             for i in range(0, len(categorical_fields), 2):
                 cols = st.columns(2)
@@ -277,82 +300,134 @@ def create_visualizations(df, fields):
                         with cols[j]:
                             try:
                                 # Calculate value counts
-                                value_counts = df[field_key].value_counts().reset_index()
+                                value_counts = df_viz[field_key].value_counts().reset_index()
                                 value_counts.columns = [field_key, 'count']
+                                
+                                # Calculate percentages
+                                total = value_counts['count'].sum()
+                                value_counts['percentage'] = (value_counts['count'] / total * 100).round(1)
+                                
+                                # Limit to top 10 categories if there are too many
+                                if len(value_counts) > 10:
+                                    top_n = value_counts.iloc[:9].copy()
+                                    other_count = value_counts.iloc[9:]['count'].sum()
+                                    other_row = pd.DataFrame({
+                                        field_key: ['Other'],
+                                        'count': [other_count],
+                                        'percentage': [(other_count / total * 100).round(1)]
+                                    })
+                                    value_counts = pd.concat([top_n, other_row], ignore_index=True)
                                 
                                 # Set title with field name
                                 st.markdown(f"#### {field_key.replace('_', ' ').title()}")
                                 
-                                # Create bar chart with modern styling
-                                fig, ax = plt.subplots(figsize=(8, 4))
-                                
-                                # Use the color palette
-                                color_idx = (i + j) % len(colors)
-                                bars = sns.barplot(
-                                    data=value_counts, 
-                                    x=field_key, 
-                                    y='count', 
-                                    ax=ax,
-                                    color=colors[color_idx],
-                                    alpha=0.8
-                                )
-                                
-                                # Add value labels on top of bars
-                                for bar in bars.patches:
-                                    bars.annotate(
-                                        f'{int(bar.get_height())}',
-                                        (bar.get_x() + bar.get_width() / 2, bar.get_height()),
-                                        ha='center', va='bottom',
-                                        fontsize=9, color='#555'
+                                if viz_type == "Bar Chart":
+                                    # Create bar chart with modern styling
+                                    fig, ax = plt.subplots(figsize=(8, 4))
+                                    
+                                    # Use the color palette
+                                    color_idx = (i + j) % len(colors)
+                                    bars = sns.barplot(
+                                        data=value_counts, 
+                                        x=field_key, 
+                                        y='count', 
+                                        ax=ax,
+                                        color=colors[color_idx],
+                                        alpha=0.8
                                     )
+                                    
+                                    # Add value labels on top of bars
+                                    for bar in bars.patches:
+                                        bars.annotate(
+                                            f'{int(bar.get_height())}',
+                                            (bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                                            ha='center', va='bottom',
+                                            fontsize=9, color='#555'
+                                        )
+                                    
+                                    # Clean up the chart
+                                    ax.spines['top'].set_visible(False)
+                                    ax.spines['right'].set_visible(False)
+                                    ax.spines['left'].set_color('#ddd')
+                                    ax.spines['bottom'].set_color('#ddd')
+                                    ax.tick_params(axis='x', labelrotation=45, labelsize=9, colors='#555')
+                                    ax.tick_params(axis='y', labelsize=9, colors='#555')
+                                    ax.set_xlabel('')
+                                    ax.set_ylabel('Count', fontsize=10, color='#666')
                                 
-                                # Clean up the chart
-                                ax.spines['top'].set_visible(False)
-                                ax.spines['right'].set_visible(False)
-                                ax.spines['left'].set_color('#ddd')
-                                ax.spines['bottom'].set_color('#ddd')
-                                ax.tick_params(axis='x', labelrotation=45, labelsize=9, colors='#555')
-                                ax.tick_params(axis='y', labelsize=9, colors='#555')
-                                ax.set_title(f"{field_key.replace('_', ' ').title()} Distribution", fontsize=12, pad=10)
-                                ax.set_xlabel('')
-                                ax.set_ylabel('Count', fontsize=10, color='#666')
+                                elif viz_type in ["Pie Chart", "Donut Chart"]:
+                                    # Create pie/donut chart
+                                    fig, ax = plt.subplots(figsize=(8, 4))
+                                    
+                                    # Create color palette with enough colors
+                                    color_palette = sns.color_palette("husl", len(value_counts))
+                                    
+                                    # Plot the pie chart
+                                    wedges, texts, autotexts = ax.pie(
+                                        value_counts['count'],
+                                        labels=value_counts[field_key],
+                                        autopct='%1.1f%%',
+                                        startangle=90,
+                                        colors=color_palette,
+                                        wedgeprops={'width': 0.5 if viz_type == "Donut Chart" else 1, 'edgecolor': 'w', 'linewidth': 1},
+                                        textprops={'fontsize': 9}
+                                    )
+                                    
+                                    # Style the percentages
+                                    for autotext in autotexts:
+                                        autotext.set_fontsize(8)
+                                        autotext.set_weight('bold')
+                                    
+                                    # Equal aspect ratio ensures that pie is drawn as a circle
+                                    ax.set_aspect('equal')
                                 
                                 plt.tight_layout()
                                 st.pyplot(fig)
                                 
-                                # Show percentage breakdown
-                                total = value_counts['count'].sum()
-                                value_counts['percentage'] = (value_counts['count'] / total * 100).round(1)
-                                
                                 # Format as colored tags
                                 tags_html = ""
                                 for _, row in value_counts.iterrows():
+                                    val = row[field_key]
                                     color_class = ""
                                     if field_key == 'sentiment':
-                                        if row[field_key].lower() == 'positive':
+                                        if val.lower() == 'positive':
                                             color_class = "tag-positive"
-                                        elif row[field_key].lower() == 'negative':
+                                        elif val.lower() == 'negative':
                                             color_class = "tag-negative"
                                         else:
                                             color_class = "tag-neutral"
                                     
-                                    tags_html += f'<span class="tag {color_class}">{row[field_key]}: {row["percentage"]}%</span> '
+                                    tags_html += f'<span class="tag {color_class}">{val}: {row["percentage"]}%</span> '
                                 
                                 st.markdown(f"<div>{tags_html}</div>", unsafe_allow_html=True)
                                 
                             except Exception as e:
                                 st.error(f"Error visualizing {field_key}: {e}")
     
+    # === NUMERICAL VISUALIZATIONS ===
     with viz_tabs[1]:
         st.markdown("### Numerical Analysis")
         
-        # Filter numerical fields
+        # Filter numerical fields - include both declared numeric and those that can be converted
         numerical_fields = [field for field in available_fields 
-                          if field['type'] == 'int' or field['type'] == 'float']
+                          if field['type'] in ['int', 'float']]
+        
+        # Add auto-detected numeric fields
+        for field in available_fields:
+            if field['type'] not in ['int', 'float'] and field['key'] in df_viz.columns:
+                if is_numeric_column(field['key']):
+                    numerical_fields.append(field)
         
         if not numerical_fields:
             st.info("No numerical fields found in the data")
         else:
+            # Add visualization type selector
+            num_viz_type = st.radio(
+                "Distribution chart type:",
+                ["Histogram", "Box Plot", "Violin Plot"],
+                horizontal=True
+            )
+            
             # Create grid layout
             for i in range(0, len(numerical_fields), 2):
                 cols = st.columns(2)
@@ -364,25 +439,55 @@ def create_visualizations(df, fields):
                         
                         with cols[j]:
                             try:
+                                # Convert to numeric if needed
+                                if df_viz[field_key].dtype == 'object':
+                                    df_viz[field_key] = pd.to_numeric(df_viz[field_key], errors='coerce')
+                                
                                 # Set title with field name
                                 st.markdown(f"#### {field_key.replace('_', ' ').title()}")
                                 
-                                # Create modern histogram with KDE
+                                # Create visualization based on selected type
                                 fig, ax = plt.subplots(figsize=(8, 4))
                                 
                                 # Use the color palette with transparency for density
                                 color_idx = (i + j) % len(colors)
                                 main_color = colors[color_idx]
                                 
-                                # Draw histogram with KDE
-                                sns.histplot(
-                                    df[field_key], 
-                                    kde=True, 
-                                    ax=ax,
-                                    color=main_color,
-                                    kde_kws={'color': '#444', 'lw': 1, 'alpha': 0.8},
-                                    alpha=0.6
-                                )
+                                if num_viz_type == "Histogram":
+                                    # Draw histogram with KDE
+                                    sns.histplot(
+                                        df_viz[field_key].dropna(), 
+                                        kde=True, 
+                                        ax=ax,
+                                        color=main_color,
+                                        kde_kws={'color': '#444', 'lw': 1, 'alpha': 0.8},
+                                        alpha=0.6
+                                    )
+                                elif num_viz_type == "Box Plot":
+                                    # Draw box plot
+                                    sns.boxplot(
+                                        x=df_viz[field_key].dropna(),
+                                        ax=ax,
+                                        color=main_color,
+                                        width=0.4
+                                    )
+                                    
+                                    # Add strip plot on top for individual points
+                                    sns.stripplot(
+                                        x=df_viz[field_key].dropna(),
+                                        ax=ax,
+                                        color='#333',
+                                        alpha=0.3,
+                                        size=3
+                                    )
+                                elif num_viz_type == "Violin Plot":
+                                    # Draw violin plot
+                                    sns.violinplot(
+                                        x=df_viz[field_key].dropna(),
+                                        ax=ax,
+                                        color=main_color,
+                                        inner="quartile"
+                                    )
                                 
                                 # Clean up the chart
                                 ax.spines['top'].set_visible(False)
@@ -392,51 +497,179 @@ def create_visualizations(df, fields):
                                 ax.tick_params(axis='x', labelsize=9, colors='#555')
                                 ax.tick_params(axis='y', labelsize=9, colors='#555')
                                 ax.set_title(f"{field_key.replace('_', ' ').title()} Distribution", fontsize=12)
-                                ax.set_xlabel(field_key.replace('_', ' ').title(), fontsize=10, color='#666')
-                                ax.set_ylabel('Count', fontsize=10, color='#666')
+                                
+                                if num_viz_type == "Histogram":
+                                    ax.set_xlabel(field_key.replace('_', ' ').title(), fontsize=10, color='#666')
+                                    ax.set_ylabel('Count', fontsize=10, color='#666')
                                 
                                 plt.tight_layout()
                                 st.pyplot(fig)
                                 
-                                # Show statistics with modern cards
+                                # Calculate and show statistics with modern cards
+                                stats = df_viz[field_key].describe()
+                                
                                 col1, col2 = st.columns(2)
                                 
                                 with col1:
-                                    mean_val = df[field_key].mean()
-                                    median_val = df[field_key].median()
-                                    
                                     st.markdown(f"""
                                     <div style="background-color:#f8f9fa; padding:10px; border-radius:5px; margin-bottom:10px;">
                                         <div style="font-size:0.8rem; color:#666;">Mean</div>
-                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{mean_val:.2f}</div>
+                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{stats['mean']:.2f}</div>
                                     </div>
                                     
                                     <div style="background-color:#f8f9fa; padding:10px; border-radius:5px;">
                                         <div style="font-size:0.8rem; color:#666;">Median</div>
-                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{median_val:.2f}</div>
+                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{stats['50%']:.2f}</div>
                                     </div>
                                     """, unsafe_allow_html=True)
                                 
                                 with col2:
-                                    min_val = df[field_key].min()
-                                    max_val = df[field_key].max()
-                                    
                                     st.markdown(f"""
                                     <div style="background-color:#f8f9fa; padding:10px; border-radius:5px; margin-bottom:10px;">
                                         <div style="font-size:0.8rem; color:#666;">Min</div>
-                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{min_val:.2f}</div>
+                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{stats['min']:.2f}</div>
                                     </div>
                                     
                                     <div style="background-color:#f8f9fa; padding:10px; border-radius:5px;">
                                         <div style="font-size:0.8rem; color:#666;">Max</div>
-                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{max_val:.2f}</div>
+                                        <div style="font-size:1.2rem; font-weight:bold; color:#1a73e8;">{stats['max']:.2f}</div>
                                     </div>
                                     """, unsafe_allow_html=True)
                                 
                             except Exception as e:
                                 st.error(f"Error visualizing {field_key}: {e}")
     
+    # === RELATIONSHIPS TAB ===
     with viz_tabs[2]:
+        st.markdown("### Relationships Between Fields")
+        
+        # Check if we have at least 2 numeric fields for correlation
+        numeric_columns = []
+        for field in available_fields:
+            if field['type'] in ['int', 'float'] and field['key'] in df_viz.columns:
+                numeric_columns.append(field['key'])
+            elif field['key'] in df_viz.columns and is_numeric_column(field['key']):
+                # Try to convert to numeric
+                df_viz[field['key']] = pd.to_numeric(df_viz[field['key']], errors='coerce')
+                numeric_columns.append(field['key'])
+        
+        if len(numeric_columns) >= 2:
+            st.subheader("Correlation Heatmap")
+            try:
+                # Calculate correlation matrix
+                corr_matrix = df_viz[numeric_columns].corr()
+                
+                # Create heatmap
+                fig, ax = plt.subplots(figsize=(10, 8))
+                mask = np.triu(np.ones_like(corr_matrix, dtype=bool))  # Create mask for upper triangle
+                
+                # Generate a custom diverging colormap
+                cmap = sns.diverging_palette(230, 20, as_cmap=True)
+                
+                # Draw the heatmap with the mask and correct aspect ratio
+                sns.heatmap(
+                    corr_matrix, 
+                    mask=mask,
+                    cmap=cmap, 
+                    vmax=1.0, 
+                    vmin=-1.0,
+                    center=0,
+                    square=True, 
+                    linewidths=.5, 
+                    cbar_kws={"shrink": .8},
+                    annot=True,
+                    fmt='.2f',
+                    annot_kws={"size": 9}
+                )
+                
+                plt.title('Correlation Between Numeric Fields', fontsize=14, pad=20)
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+                # Allow exploration of relationships between two fields
+                st.subheader("Explore Relationships")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    x_field = st.selectbox("X-axis field:", numeric_columns, key="x_field")
+                with col2:
+                    y_field = st.selectbox("Y-axis field:", [f for f in numeric_columns if f != x_field], key="y_field")
+                
+                # Create scatter plot
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Draw scatter plot with regression line
+                scatter = sns.regplot(
+                    x=x_field,
+                    y=y_field,
+                    data=df_viz,
+                    scatter_kws={"alpha": 0.6, "s": 80, "color": colors[0]},
+                    line_kws={"color": colors[3], "lw": 2, "alpha": 0.7},
+                    ax=ax
+                )
+                
+                # Calculate correlation coefficient
+                corr = df_viz[[x_field, y_field]].corr().iloc[0, 1]
+                
+                # Clean up the chart
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['left'].set_color('#ddd')
+                ax.spines['bottom'].set_color('#ddd')
+                ax.tick_params(colors='#555')
+                ax.set_title(f"Relationship between {x_field.replace('_', ' ').title()} and {y_field.replace('_', ' ').title()}\nCorrelation: {corr:.2f}", fontsize=12, pad=20)
+                ax.set_xlabel(x_field.replace('_', ' ').title(), fontsize=11, color='#444')
+                ax.set_ylabel(y_field.replace('_', ' ').title(), fontsize=11, color='#444')
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+            except Exception as e:
+                st.error(f"Error creating correlation analysis: {e}")
+        else:
+            st.info("Need at least 2 numeric fields for correlation analysis")
+        
+        # Categorical relationship exploration
+        categorical_fields = [field['key'] for field in available_fields if field['type'] == 'enum' or field['type'] == 'str']
+        
+        if len(categorical_fields) >= 2 and len(categorical_fields) <= 10:
+            st.subheader("Categorical Field Relationships")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                cat_x = st.selectbox("First category:", categorical_fields, key="cat_x")
+            with col2:
+                cat_y = st.selectbox("Second category:", [f for f in categorical_fields if f != cat_x], key="cat_y")
+            
+            try:
+                # Create cross-tabulation
+                cross_tab = pd.crosstab(df_viz[cat_x], df_viz[cat_y])
+                
+                # Normalize to show percentages
+                cross_tab_norm = pd.crosstab(df_viz[cat_x], df_viz[cat_y], normalize='index') * 100
+                
+                # Create heatmap visualization
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                sns.heatmap(
+                    cross_tab_norm,
+                    annot=cross_tab.values,  # Show raw counts
+                    fmt='d',  # Display as integers
+                    cmap='YlGnBu',
+                    ax=ax,
+                    linewidths=0.5,
+                    cbar_kws={'label': 'Percentage (%)'}
+                )
+                
+                plt.title(f'Relationship Between {cat_x.replace("_", " ").title()} and {cat_y.replace("_", " ").title()}', fontsize=14, pad=20)
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+            except Exception as e:
+                st.error(f"Error analyzing categorical relationships: {e}")
+        
+    # === TEXT ANALYSIS TAB ===
+    with viz_tabs[3]:
         st.markdown("### Text & Theme Analysis")
         
         # Look for themes field or other text fields
@@ -521,11 +754,11 @@ def create_visualizations(df, fields):
                 st.error(f"Error analyzing themes: {e}")
         
         # Look for other text fields to analyze (like image_description)
-        text_field = next((field for field in available_fields 
-                        if field['key'] in ['image_description', 'target_audience'] 
-                        and field['key'] in df.columns), None)
+        text_fields = [field for field in available_fields 
+                     if field['type'] == 'str' and field['key'] in df.columns 
+                     and field['key'] not in ['themes']]
         
-        if text_field:
+        for text_field in text_fields:
             field_key = text_field['key']
             
             st.markdown(f"#### {field_key.replace('_', ' ').title()} Word Cloud")
@@ -562,6 +795,76 @@ def create_visualizations(df, fields):
             
             except Exception as e:
                 st.error(f"Error creating word cloud: {e}")
+    
+    # === ADVANCED TAB ===
+    with viz_tabs[4]:
+        st.markdown("### Advanced Analysis")
+        
+        # Summary statistics for all fields
+        st.subheader("Summary Statistics")
+        
+        # Get statistics for numeric fields
+        numeric_stats = df_viz.describe().T.reset_index()
+        numeric_stats.columns = ['field'] + list(numeric_stats.columns[1:])
+        
+        if not numeric_stats.empty:
+            st.dataframe(numeric_stats, use_container_width=True)
+            
+            # Option to download stats
+            csv_stats = numeric_stats.to_csv(index=False)
+            b64_stats = base64.b64encode(csv_stats.encode()).decode()
+            st.download_button(
+                label="Download Statistics CSV",
+                data=csv_stats,
+                file_name="statistics_summary.csv",
+                mime="text/csv",
+            )
+        
+        # Missing data visualization
+        st.subheader("Missing Data Analysis")
+        
+        # Calculate missing values
+        missing_data = df_viz.isnull().sum().reset_index()
+        missing_data.columns = ['Field', 'Missing Values']
+        missing_data['Percentage'] = (missing_data['Missing Values'] / len(df_viz) * 100).round(1)
+        missing_data = missing_data.sort_values('Missing Values', ascending=False)
+        
+        if missing_data['Missing Values'].sum() > 0:
+            # Create bar chart for missing values
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            bars = sns.barplot(
+                data=missing_data,
+                y='Field',
+                x='Percentage',
+                ax=ax,
+                color=colors[0],
+                alpha=0.7
+            )
+            
+            # Add percentage labels
+            for i, bar in enumerate(bars.patches):
+                bars.text(
+                    bar.get_width() + 0.3,
+                    bar.get_y() + bar.get_height()/2,
+                    f'{missing_data.iloc[i]["Missing Values"]} ({missing_data.iloc[i]["Percentage"]}%)',
+                    ha='left', va='center',
+                    fontsize=9, color='#555'
+                )
+            
+            # Clean up the chart
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#ddd')
+            ax.spines['bottom'].set_color('#ddd')
+            ax.set_title("Missing Values by Field", fontsize=14)
+            ax.set_xlabel('Percentage (%)', fontsize=10, color='#666')
+            ax.set_ylabel('')
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+        else:
+            st.info("No missing values in the dataset")
 
 def display_errors(results_df):
     """Display any errors encountered during processing."""
