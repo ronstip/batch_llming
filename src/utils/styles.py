@@ -124,6 +124,29 @@ def apply_custom_css():
         img {
             border-radius: 0.4rem;
             transition: transform 0.2s ease;
+            max-width: 100% !important;
+            height: auto !important;
+            object-fit: contain !important;
+            margin: 0 auto;
+            display: block;
+        }
+        
+        .stImage {
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stImage > div {
+            display: flex;
+            justify-content: center;
+        }
+        
+        /* Improve caption alignment */
+        .caption {
+            text-align: center;
+            margin-top: 0.2rem;
+            font-size: 0.8rem;
+            color: #666;
         }
         
         .hover-zoom img:hover {
@@ -174,7 +197,7 @@ def apply_custom_css():
         /* Image gallery styling */
         .image-gallery {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
             gap: 0.5rem;
             margin-top: 1rem;
         }
@@ -184,6 +207,16 @@ def apply_custom_css():
             overflow: hidden;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             transition: all 0.2s ease;
+            aspect-ratio: 1 / 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .image-card img {
+            max-height: 120px;
+            width: auto;
+            object-fit: contain;
         }
         
         .image-card:hover {

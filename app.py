@@ -248,7 +248,7 @@ def create_visualizations(df, fields):
         except Exception as e:
             st.error(f"Error visualizing {field_key}: {str(e)}")
 
-def load_and_resize_image(image_path, max_width=150):
+def load_and_resize_image(image_path, max_width=120):
     """Load an image from path and resize it to create a thumbnail with caching for performance"""
     # Use Streamlit's caching to avoid reloading the same image multiple times
     @st.cache_data(ttl=3600, show_spinner=False)
@@ -261,7 +261,8 @@ def load_and_resize_image(image_path, max_width=150):
                     response.raise_for_status()  # Raise exception for bad responses
                     image = Image.open(BytesIO(response.content))
                 except (requests.RequestException, IOError) as e:
-                    st.warning(f"Failed to load image from URL: {path}")
+                    # Avoid showing warning repeatedly - just print to console
+                    print(f"Failed to load image from URL: {path}")
                     return None
             else:
                 # For local file paths
@@ -269,7 +270,7 @@ def load_and_resize_image(image_path, max_width=150):
                     try:
                         image = Image.open(path)
                     except IOError:
-                        st.warning(f"Failed to open image file: {path}")
+                        print(f"Failed to open image file: {path}")
                         return None
                 else:
                     return None
@@ -283,7 +284,7 @@ def load_and_resize_image(image_path, max_width=150):
             new_height = int(float(image.height) * width_percent)
             
             # Ensure reasonable dimensions (prevent excessively tall images)
-            max_height = width * 2  # Max height is twice the width
+            max_height = width * 1.5  # Max height is 1.5x the width (reduced from 2x)
             if new_height > max_height:
                 new_height = max_height
             
@@ -343,7 +344,7 @@ def display_results(results_df, fields):
                     engagement_level = "Low"
                 st.metric("Average Engagement", engagement_level)
             except:
-                st.metric("Average Engagement", "N/A")
+                st.metric("Average Engagement", "Not Available")
     
     # Most common themes if present
     if 'themes' in field_keys and 'themes' in results_df.columns:
@@ -414,67 +415,66 @@ def display_results(results_df, fields):
         st.dataframe(filtered_df, use_container_width=True)
         
         # Add image thumbnails directly below the table if images exist
-        if image_path_columns:
-            st.markdown("### Post Images")
+        # if image_path_columns:
+        #     st.markdown("### Post Images")
             
-            # Pagination for image display
-            items_per_page = 5
-            total_pages = (len(filtered_df) + items_per_page - 1) // items_per_page
+        #     # Pagination for image display
+        #     items_per_page = 5
+        #     total_pages = (len(filtered_df) + items_per_page - 1) // items_per_page
             
-            col1, col2, col3 = st.columns([1, 3, 1])
-            with col2:
-                page = st.number_input("Page", min_value=1, max_value=max(1, total_pages), value=1) - 1
+        #     col1, col2, col3 = st.columns([1, 3, 1])
+        #     with col2:
+        #         page = st.number_input("Page", min_value=1, max_value=max(1, total_pages), value=1) - 1
             
-            start_idx = page * items_per_page
-            end_idx = min(start_idx + items_per_page, len(filtered_df))
+        #     start_idx = page * items_per_page
+        #     end_idx = min(start_idx + items_per_page, len(filtered_df))
             
-            for idx in range(start_idx, end_idx):
-                row = filtered_df.iloc[idx]
+        #     for idx in range(start_idx, end_idx):
+        #         row = filtered_df.iloc[idx]
                 
-                # Create a row with information and images
-                col1, col2 = st.columns([1, 3])
+        #         # Create a row with information and images
+        #         col1, col2 = st.columns([1, 3])
                 
-                with col1:
-                    st.markdown(f"**Post #{idx+1}**")
-                    st.markdown(f"**Title:** {row.get('original_title', 'N/A')}")
+        #         with col1:
+        #             st.markdown(f"**Post #{idx+1}**")
+        #             title = row.get('original_title', '')
+        #             if title:
+        #                 st.markdown(f"**Title:** {title}")
                     
-                    # Show key insights inline
-                    for field in fields[:3]:  # Show first 3 fields only
-                        field_key = field['key']
-                        if field_key in row and field_key not in ['image_description']:
-                            if field_key == 'sentiment' and 'formatted_sentiment' in row:
-                                st.markdown(f"**Sentiment:** {row['formatted_sentiment']}", unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"**{field_key.title()}:** {row[field_key]}")
+        #             # Show key insights inline
+        #             for field in fields[:3]:  # Show first 3 fields only
+        #                 field_key = field['key']
+        #                 if field_key in row and field_key not in ['image_description']:
+        #                     if field_key == 'sentiment' and 'formatted_sentiment' in row:
+        #                         st.markdown(f"**Sentiment:** {row['formatted_sentiment']}", unsafe_allow_html=True)
+        #                     else:
+        #                         st.markdown(f"**{field_key.title()}:** {row[field_key]}")
                 
-                with col2:
-                    # Create image gallery for this row
-                    valid_image_cols = []
-                    for col in image_path_columns:
-                        img_path = row[col]
-                        if pd.notna(img_path) and str(img_path).strip():
-                            valid_image_cols.append((col, img_path))
+        #         with col2:
+        #             # Create image gallery for this row
+        #             valid_image_cols = []
+        #             for col in image_path_columns:
+        #                 img_path = row[col]
+        #                 if pd.notna(img_path) and str(img_path).strip():
+        #                     valid_image_cols.append((col, img_path))
                     
-                    if valid_image_cols:
-                        image_display_cols = st.columns(min(4, len(valid_image_cols)))
+        #             if valid_image_cols:
+        #                 image_display_cols = st.columns(min(3, len(valid_image_cols)))
                         
-                        for i, (col, img_path) in enumerate(valid_image_cols):
-                            col_name = col.replace('original_', '')
+        #                 for i, (col, img_path) in enumerate(valid_image_cols):
+        #                     col_name = col.replace('original_', '')
                             
-                            with image_display_cols[i % len(image_display_cols)]:
-                                # Load and display the image
-                                img = load_and_resize_image(img_path, max_width=180)
-                                if img:
-                                    # Add hover zoom effect
-                                    st.markdown('<div class="hover-zoom">', unsafe_allow_html=True)
-                                    st.image(img, caption=col_name)
-                                    st.markdown('</div>', unsafe_allow_html=True)
-                                else:
-                                    st.markdown(f"[{col_name}]({img_path})")
-                    else:
-                        st.info("No images available for this post")
+        #                     with image_display_cols[i % len(image_display_cols)]:
+        #                         # Load and display the image
+        #                         img = load_and_resize_image(img_path, max_width=160)
+        #                         if img:
+        #                             st.image(img, caption=col_name)
+        #                         else:
+        #                             st.markdown(f"[{col_name}]({img_path})")
+        #             else:
+        #                 st.info("No images available for this post")
                 
-                st.markdown("---")
+        #         st.markdown("---")
         
         # Download button for results
         csv = filtered_df.to_csv(index=False)
@@ -503,9 +503,10 @@ def display_results(results_df, fields):
                         # Add post number for reference
                         st.markdown(f"### Post #{i+j+1}")
                         
-                        # Title with better styling
-                        title = row.get('original_title', row.get('original_query', 'N/A'))
-                        st.markdown(f"<strong style='color:#1967d2;'>{title}</strong>", unsafe_allow_html=True)
+                        # Title with better styling - only show if exists
+                        title = row.get('original_title', row.get('original_query', ''))
+                        if title:
+                            st.markdown(f"<strong style='color:#1967d2;'>{title}</strong>", unsafe_allow_html=True)
                         
                         # Display images first if they exist
                         image_cols = [col for col in row.index if col.startswith('original_') and 
@@ -517,25 +518,23 @@ def display_results(results_df, fields):
                             img_path = row.get(first_img_col)
                             
                             if pd.notna(img_path) and str(img_path).strip():
-                                img = load_and_resize_image(img_path, max_width=220)
+                                img = load_and_resize_image(img_path, max_width=180)
                                 if img:
-                                    st.markdown('<div class="hover-zoom">', unsafe_allow_html=True)
-                                    st.image(img, use_column_width=True)
-                                    st.markdown('</div>', unsafe_allow_html=True)
+                                    st.image(img, use_container_width=False)
                             
                             # Show additional images as small thumbnails if more than one
                             if len(image_cols) > 1:
                                 st.markdown("**More Images:**")
-                                thumb_cols = st.columns(min(4, len(image_cols)-1))
+                                thumb_cols = st.columns(min(3, len(image_cols)-1))
                                 
                                 for idx, img_col in enumerate(image_cols[1:]):
                                     if idx < len(thumb_cols):
                                         img_path = row.get(img_col)
                                         if pd.notna(img_path) and str(img_path).strip():
                                             with thumb_cols[idx]:
-                                                img = load_and_resize_image(img_path, max_width=80)
+                                                img = load_and_resize_image(img_path, max_width=120)
                                                 if img:
-                                                    st.image(img, use_column_width=True)
+                                                    st.image(img, caption=img_col.replace('original_', ''))
                         
                         # Display analysis results with styled tags
                         st.markdown("#### Analysis")
@@ -550,12 +549,11 @@ def display_results(results_df, fields):
                             if field_key in row and field_key != 'sentiment':
                                 # Format themes as individual tags
                                 if field_key == 'themes' and isinstance(row[field_key], str):
-                                    st.markdown(f"**Themes:**")
-                                    themes_html = ""
                                     themes = [t.strip() for t in row[field_key].split(',')]
+                                    themes_html = ""
                                     for theme in themes:
                                         themes_html += f'<span class="tag">{theme}</span> '
-                                    st.markdown(f"<div>{themes_html}</div>", unsafe_allow_html=True)
+                                    st.markdown(f"**Themes:** {themes_html}", unsafe_allow_html=True)
                                 # Format engagement with colored indicators
                                 elif field_key == 'engagement_potential':
                                     engagement = row[field_key]
@@ -569,12 +567,41 @@ def display_results(results_df, fields):
                                         st.markdown(f"**Engagement:** <span class='tag tag-neutral'>{engagement}</span>", 
                                                    unsafe_allow_html=True)
                                 # Other fields with normal formatting
-                                elif field_key != 'image_description':  # Skip image description from card view
-                                    st.markdown(f"**{field_key.replace('_', ' ').title()}:** {row[field_key]}")
+                                else:
+                                    field_value = row[field_key] if pd.notna(row[field_key]) else "Not available"
+                                    
+                                    # Apply tag styling to relevant field types
+                                    if isinstance(field_value, str) and (',' in field_value or field_value.lower() in ['high', 'medium', 'low', 'positive', 'negative', 'neutral']):
+                                        # If comma-separated values, create multiple tags
+                                        if ',' in field_value:
+                                            values = [v.strip() for v in field_value.split(',')]
+                                            values_html = ""
+                                            for val in values:
+                                                # Apply color based on value sentiment
+                                                if val.lower() in ['high', 'positive', 'excellent', 'good']:
+                                                    values_html += f'<span class="tag tag-positive">{val}</span> '
+                                                elif val.lower() in ['low', 'negative', 'poor', 'bad']:
+                                                    values_html += f'<span class="tag tag-negative">{val}</span> '
+                                                else:
+                                                    values_html += f'<span class="tag">{val}</span> '
+                                            st.markdown(f"**{field_key.replace('_', ' ').title()}:** {values_html}", unsafe_allow_html=True)
+                                        # Single value with sentiment-based coloring
+                                        else:
+                                            tag_class = ""
+                                            if field_value.lower() in ['high', 'positive', 'excellent', 'good']:
+                                                tag_class = "tag-positive"
+                                            elif field_value.lower() in ['low', 'negative', 'poor', 'bad']:
+                                                tag_class = "tag-negative"
+                                            
+                                            st.markdown(f"**{field_key.replace('_', ' ').title()}:** <span class='tag {tag_class}'>{field_value}</span>", 
+                                                      unsafe_allow_html=True)
+                                    else:
+                                        # Default display for other fields
+                                        st.markdown(f"**{field_key.replace('_', ' ').title()}:** {field_value}")
     
     # Image Gallery Tab
     with tab3:
-        if not image_path_columns:
+        if not st.session_state.get('image_path_columns', []):  #image_path_columns:
             st.info("No images available in the current dataset")
         else:
             st.markdown("### Image Gallery")
@@ -604,39 +631,45 @@ def display_results(results_df, fields):
                 
                 col1, col2, col3 = st.columns([1, 3, 1])
                 with col2:
-                    page = st.slider("Gallery Page", 1, max(1, total_pages), 1)
+                    page = st.slider("Gallery Page", 1, max(2, total_pages), 1)
                 
                 start_idx = (page - 1) * items_per_page
                 end_idx = min(start_idx + items_per_page, len(all_images))
                 
-                # Create a grid layout for the gallery
-                st.markdown('<div class="image-gallery">', unsafe_allow_html=True)
+                # Display images in a matrix layout using columns
+                rows = []
+                current_row = []
                 
                 for i in range(start_idx, end_idx):
-                    img_info = all_images[i]
-                    img_path = img_info['path']
-                    
-                    # Create image card HTML
-                    st.markdown(f"""
-                    <div class="image-card">
-                        <a href="#" onclick="return false;">
-                            <img src="data:image/png;base64,{get_image_base64(img_path)}" 
-                                 style="width:100%; height:auto;" 
-                                 title="Row {img_info['row_idx']}: {img_info['column']}">
-                        </a>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    current_row.append(all_images[i])
+                    if len(current_row) == img_cols_per_page:
+                        rows.append(current_row)
+                        current_row = []
                 
-                st.markdown('</div>', unsafe_allow_html=True)
+                # Add any remaining images
+                if current_row:
+                    rows.append(current_row)
+                
+                # Display each row of images
+                for row_images in rows:
+                    cols = st.columns(img_cols_per_page)
+                    for i, img_info in enumerate(row_images):
+                        with cols[i]:
+                            img_path = img_info['path']
+                            img = load_and_resize_image(img_path, max_width=180)
+                            if img:
+                                st.image(img, caption=f"{img_path}")
+                            else:
+                                st.markdown(f"[{img_info['column']}]({img_path})")
 
 # Helper function to get base64 encoded image for HTML display
-def get_image_base64(image_path, max_width=200):
+def get_image_base64(image_path, max_width=120):
     """Convert image to base64 for HTML embedding"""
     try:
         img = load_and_resize_image(image_path, max_width=max_width)
         if img:
             buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
+            img.save(buffered, format="PNG", optimize=True, quality=85)
             return base64.b64encode(buffered.getvalue()).decode()
         return ""
     except Exception as e:
@@ -697,6 +730,7 @@ def main():
     with input_tab:
         # Load data input component
         uploaded_file, df, image_data, image_path_columns, input_mode, query_text = render_data_input()
+        st.session_state.image_path_columns = image_path_columns
         
         # Show image data status
         if image_data:
@@ -747,6 +781,22 @@ def main():
                     type="primary", 
                     use_container_width=True
                 )
+        
+        # Display errors from processing if they exist
+        if hasattr(st.session_state, 'has_errors') and st.session_state.has_errors:
+            st.markdown("---")
+            st.subheader("⚠️ Processing Errors")
+            
+            if hasattr(st.session_state, 'error_results') and st.session_state.error_results:
+                st.warning(f"{len(st.session_state.error_results)} items failed to process properly.")
+                
+                with st.expander("View Error Details", expanded=False):
+                    for i, error_result in enumerate(st.session_state.error_results):
+                        st.markdown(f"**Error {i+1}:** {error_result.get('error', 'Unknown error')}")
+                        if 'traceback' in error_result:
+                            st.markdown("**Traceback:**")
+                            st.code(error_result['traceback'], language='python')
+                        st.markdown("---")
     
     # Handle data processing
     query_mode = input_mode == "Write Query" and query_text
@@ -796,11 +846,30 @@ def main():
                     
                     # Check if any results were returned
                     if results:
-                        # Convert results to DataFrame
-                        results_df = pd.DataFrame(results)
+                        # Separate successful results from errors
+                        success_results = []
+                        error_results = []
                         
-                        # Store in session state
-                        st.session_state.results_df = results_df
+                        for result in results:
+                            if 'error' in result:
+                                error_results.append(result)
+                            else:
+                                success_results.append(result)
+                        
+                        # Convert successful results to DataFrame
+                        if success_results:
+                            results_df = pd.DataFrame(success_results)
+                            
+                            # Store in session state
+                            st.session_state.results_df = results_df
+                            st.session_state.has_errors = len(error_results) > 0
+                            st.session_state.error_results = error_results
+                        else:
+                            # All results had errors
+                            st.session_state.results_df = pd.DataFrame()
+                            st.session_state.has_errors = True
+                            st.session_state.error_results = error_results
+                            st.session_state.error_message = "All processing attempts resulted in errors. Check the error details."
                         
                         # Show processing time
                         elapsed_time = time.time() - start_time
@@ -808,8 +877,14 @@ def main():
                         
                         st.success(f"✅ Processed {len(results)} items in {elapsed_time:.2f} seconds ({time_per_item:.2f}s per item)")
                         
-                        # Switch to results tab automatically
-                        results_tab.active = True
+                        if success_results:
+                            st.success(f"Successfully processed {len(success_results)} of {len(results)} items")
+                            
+                            # Switch to results tab automatically only if we have successful results
+                            results_tab.active = True
+                        
+                        if error_results:
+                            st.warning(f"⚠️ {len(error_results)} of {len(results)} items had errors. See the 'Analyze Data' tab for details.")
                     else:
                         st.session_state.error_message = "No results were generated. Check your data and try again."
                         st.error(st.session_state.error_message)
@@ -834,18 +909,45 @@ def main():
                     
                     # Check if any results were returned
                     if results:
-                        # Convert results to DataFrame
-                        results_df = pd.DataFrame(results)
+                        # Separate successful results from errors
+                        success_results = []
+                        error_results = []
                         
-                        # Store in session state
-                        st.session_state.results_df = results_df
+                        for result in results:
+                            if 'error' in result:
+                                error_results.append(result)
+                            else:
+                                success_results.append(result)
+                        
+                        # Convert successful results to DataFrame
+                        if success_results:
+                            results_df = pd.DataFrame(success_results)
+                            
+                            # Store in session state
+                            st.session_state.results_df = results_df
+                            st.session_state.has_errors = len(error_results) > 0
+                            st.session_state.error_results = error_results
+                        else:
+                            # All results had errors
+                            st.session_state.results_df = pd.DataFrame()
+                            st.session_state.has_errors = True
+                            st.session_state.error_results = error_results
+                            st.session_state.error_message = "All processing attempts resulted in errors. Check the error details."
                         
                         # Show processing time
                         elapsed_time = time.time() - start_time
+                        time_per_item = elapsed_time / len(results)
+                        
                         st.success(f"✅ Query processed in {elapsed_time:.2f} seconds")
                         
-                        # Switch to results tab automatically
-                        results_tab.active = True
+                        if success_results:
+                            st.success(f"Successfully processed {len(success_results)} of {len(results)} items")
+                            
+                            # Switch to results tab automatically only if we have successful results
+                            results_tab.active = True
+                        
+                        if error_results:
+                            st.warning(f"⚠️ {len(error_results)} of {len(results)} items had errors. See the 'Analyze Data' tab for details.")
                     else:
                         st.session_state.error_message = "No results were generated. Try adjusting your query and try again."
                         st.error(st.session_state.error_message)
@@ -892,16 +994,8 @@ def main():
         
         # Display any errors embedded in the results
         if hasattr(st.session_state, 'results_df') and not st.session_state.results_df.empty:
-            if 'error' in st.session_state.results_df.columns:
-                error_rows = st.session_state.results_df[st.session_state.results_df['error'].notna()]
-                if not error_rows.empty:
-                    with st.expander(f"⚠️ Errors in {len(error_rows)} rows", expanded=False):
-                        for i, (_, row) in enumerate(error_rows.iterrows()):
-                            st.markdown(f"**Error {i+1}:** {row['error']}")
-                            if 'traceback' in row:
-                                st.markdown("**Traceback:**")
-                                st.code(row['traceback'], language='python')
-                                st.markdown("---")
+            # We've moved error handling to the Analyze Data tab
+            pass
 
 if __name__ == "__main__":
     main()
