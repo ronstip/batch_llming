@@ -7,11 +7,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal, get_type_hints, Dict, Any, Type, List, Optional
-from langchain.pydantic_v1 import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage
 import time
 import os
+from PIL import Image
+import io
+import requests
+from io import BytesIO
 # from langchain_community.chat_models import ChatOpenAI
 try:
     from langchain_openai import ChatOpenAI
@@ -23,7 +27,7 @@ except ImportError:
 from src.components.data_input import render_data_input
 from src.components.configuration import render_sidebar_config, render_analysis_config
 from src.models.pydantic_models import create_dynamic_model
-from src.utils.processing import process_data_batch
+from src.utils.processing import process_data_batch, load_image_from_path
 from src.utils.styles import apply_custom_css
 from src.visualizations.display import display_results, create_visualizations, display_errors
 
@@ -69,7 +73,7 @@ def create_dynamic_model(name: str, fields: list[dict[str, Any]]) -> Type[BaseMo
 
     return create_model(name, **annotations)
 
-def process_post(row, prompt_template, model, output_model):
+def process_post(row, prompt_template, model, output_model, image_data=None, image_path_columns=None):
     try:
         # Create a log dictionary to capture each step
         debug_info = {}
@@ -86,10 +90,56 @@ def process_post(row, prompt_template, model, output_model):
             debug_info["format_error"] = str(format_err)
             raise format_err
         
-        # Create a chat prompt template
-        prompt = ChatPromptTemplate.from_messages([
-            ("human", formatted_prompt)
-        ])
+        # Determine image to use - prioritize image_path_columns if provided
+        row_image_data = None
+        
+        # Check if we have image path columns and try to load the first valid image
+        if image_path_columns:
+            debug_info["image_path_columns"] = image_path_columns
+            for col in image_path_columns:
+                if col in post_values and post_values[col].strip():
+                    image_path = post_values[col]
+                    debug_info["image_path_attempted"] = image_path
+                    
+                    # Try to load the image from the path
+                    row_image_data = load_image_from_path(image_path)
+                    if row_image_data:
+                        debug_info["image_loaded_from_path"] = image_path
+                        break
+        
+        # If no image was loaded from paths, use the global image_data if available
+        if not row_image_data and image_data:
+            row_image_data = image_data
+            debug_info["using_global_image"] = True
+        
+        # Create a chat prompt template based on whether we have an image
+        if row_image_data:
+            # Create a multimodal message with image
+            content = [
+                {"type": "text", "text": formatted_prompt}
+            ]
+            
+            # Add image as content part
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{row_image_data['type']};base64,{row_image_data['base64']}"
+                }
+            })
+            
+            # Create a multimodal message
+            message = HumanMessage(content=content)
+            
+            # Create chat prompt with multimodal content
+            prompt = ChatPromptTemplate.from_messages([message])
+            debug_info["prompt_type"] = "multimodal"
+        else:
+            # Standard text-only prompt
+            prompt = ChatPromptTemplate.from_messages([
+                ("human", formatted_prompt)
+            ])
+            debug_info["prompt_type"] = "text-only"
+            
         debug_info["prompt_created"] = True
         
         # Check if model is None
@@ -198,6 +248,31 @@ def create_visualizations(df, fields):
         except Exception as e:
             st.error(f"Error visualizing {field_key}: {str(e)}")
 
+def load_and_resize_image(image_path, max_width=150):
+    """Load an image from path and resize it to create a thumbnail"""
+    try:
+        # Handle both URLs and local file paths
+        if image_path.startswith(('http://', 'https://')):
+            response = requests.get(image_path)
+            image = Image.open(BytesIO(response.content))
+        else:
+            # For local file paths
+            if os.path.exists(image_path):
+                image = Image.open(image_path)
+            else:
+                return None
+        
+        # Calculate new height while maintaining aspect ratio
+        width_percent = max_width / float(image.width)
+        new_height = int(float(image.height) * width_percent)
+        
+        # Resize the image
+        resized_image = image.resize((max_width, new_height), Image.LANCZOS)
+        return resized_image
+    except Exception as e:
+        print(f"Error loading image {image_path}: {e}")
+        return None
+
 # Function to display results with metrics and tables
 def display_results(results_df, fields):
     st.header("Analysis Results")
@@ -259,7 +334,61 @@ def display_results(results_df, fields):
     tab1, tab2 = st.tabs(["Table View", "Card View"])
     
     with tab1:
+        # Identify image path columns in the dataframe
+        image_path_columns = [col for col in results_df.columns if col.startswith('original_') and 
+                            any(path_col in col for path_col in st.session_state.get('image_path_columns', []))]
+        
+        # Display the main dataframe
         st.dataframe(results_df, use_container_width=True)
+        
+        # If we have image path columns, create an image viewer section
+        if image_path_columns:
+            with st.expander("🖼️ View Images", expanded=True):
+                # Display images in a grid layout - 5 rows per page
+                rows_per_page = 5
+                total_pages = (len(results_df) + rows_per_page - 1) // rows_per_page
+                
+                page = st.number_input("Page", min_value=1, max_value=max(1, total_pages), value=1) - 1
+                start_idx = page * rows_per_page
+                end_idx = min(start_idx + rows_per_page, len(results_df))
+                
+                for idx in range(start_idx, end_idx):
+                    row = results_df.iloc[idx]
+                    st.write(f"**Row {idx}:**")
+                    
+                    # Create a grid of images
+                    valid_image_cols = []
+                    for col in image_path_columns:
+                        img_path = row[col]
+                        if pd.notna(img_path) and str(img_path).strip():
+                            valid_image_cols.append(col)
+                    
+                    if valid_image_cols:
+                        # Calculate grid dimensions
+                        cols_per_row = 4  # Display 4 images per row
+                        num_rows = (len(valid_image_cols) + cols_per_row - 1) // cols_per_row
+                        
+                        for r in range(num_rows):
+                            image_cols = st.columns(cols_per_row)
+                            
+                            for c in range(cols_per_row):
+                                col_idx = r * cols_per_row + c
+                                if col_idx < len(valid_image_cols):
+                                    col = valid_image_cols[col_idx]
+                                    img_path = row[col]
+                                    col_name = col.replace('original_', '')
+                                    
+                                    with image_cols[c]:
+                                        # Load and display the image
+                                        img = load_and_resize_image(img_path)
+                                        if img:
+                                            st.image(img, caption=col_name)
+                                        else:
+                                            st.write(f"[{col_name}]({img_path})")
+                    else:
+                        st.write("No images available")
+                    
+                    st.write("---")
         
         # Download button for results
         csv = results_df.to_csv(index=False)
@@ -289,127 +418,161 @@ def display_results(results_df, fields):
                             if field_key in row:
                                 st.markdown(f"**{field_key.replace('_', ' ').title()}:** {row[field_key]}")
                         
+                        # Display images if path exists
+                        image_cols = [col for col in row.index if col.startswith('original_') and 
+                                    any(path_col in col for path_col in st.session_state.get('image_path_columns', []))]
+                        
+                        if image_cols:
+                            st.markdown("**Images:**")
+                            
+                            # Create a 2x2 grid for thumbnails
+                            img_grid_size = min(2, len(image_cols))
+                            if img_grid_size > 0:
+                                for img_idx in range(0, len(image_cols), img_grid_size):
+                                    img_row = st.columns(img_grid_size)
+                                    
+                                    for grid_idx in range(img_grid_size):
+                                        col_idx = img_idx + grid_idx
+                                        if col_idx < len(image_cols):
+                                            img_col = image_cols[col_idx]
+                                            img_path = row.get(img_col)
+                                            
+                                            if pd.notna(img_path) and str(img_path).strip():
+                                                col_name = img_col.replace('original_', '')
+                                                
+                                                with img_row[grid_idx]:
+                                                    # Load and display thumbnails
+                                                    img = load_and_resize_image(img_path, max_width=120)
+                                                    if img:
+                                                        st.image(img, caption=col_name)
+                                                    else:
+                                                        st.write(f"[{col_name}]({img_path})")
+                        
                         st.markdown("---")
 
 # Main app
 def main():
-    st.title("Social Media Post Analysis with LLM")
+    # Apply custom CSS
+    apply_custom_css()
     
-    # Create a horizontal layout for the top section
-    header_col1, header_col2 = st.columns([2, 1])
+    st.title("🔄 Batch LLM Processing")
+    st.write("Process multiple inputs using Large Language Models with structured outputs")
+
+    # Initialize session state
+    if 'llm_initialized' not in st.session_state:
+        st.session_state.llm_initialized = False
     
-    with header_col2:
-        st.image("https://img.icons8.com/color/96/000000/analytics.png", width=100)
+    # Sidebars and configuration
+    llm, api_key, image_detail = render_sidebar_config()
     
-    with header_col1:
-        st.markdown("""
-        This app analyzes social media posts using OpenAI's language models to extract insights about sentiment, 
-        themes, target audience, and engagement potential.
-        """)
+    # Make sure LLM is initialized
+    if not api_key:
+        st.warning("Please enter your OpenAI API key in the sidebar to continue")
+        st.stop()
     
-    # Initialize the model in the sidebar
-    llm, api_key = render_sidebar_config()
+    st.session_state.llm_initialized = llm is not None
     
-    # Create tabs for main workflow
-    tabs = ["📊 Data Input", "🔧 Configuration", "📈 Results"]
-    tab1, tab2, tab3 = st.tabs(tabs)
+    if not st.session_state.llm_initialized:
+        st.error("The language model failed to initialize. Please check your API key and settings.")
+        st.stop()
     
-    # Logic to select the active tab
-    if 'active_tab' not in st.session_state:
-        st.session_state.active_tab = 0  # Default to first tab
+    # Main sections
+    uploaded_file, df, image_data, image_path_columns, input_mode, query_text = render_data_input()
+    prompt_template, fields = render_analysis_config()
+    
+    # Debugging info for image data
+    if image_data:
+        st.sidebar.success("✅ Global image loaded for all rows")
+    
+    # Create the processing button
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        analyze_button = st.button("🚀 Analyze Data", type="primary", use_container_width=True)
         
-    # Data Input tab
-    with tab1:
-        df, query_text = render_data_input()
+    with col2:
+        # Number of workers selection
+        n_workers = st.number_input("Parallel Workers", min_value=1, max_value=10, value=2,
+                                  help="Number of parallel processing workers. Higher values process faster but use more resources.")
     
-    # Configuration tab
-    with tab2:
-        prompt_text, fields = render_analysis_config()
-        
-        # Create the output model if possible
-        try:
-            OutputModel = create_dynamic_model("OutputModel", fields)
-            with st.expander("Output Model Schema"):
-                st.code(OutputModel.schema_json(indent=2), language="json")
-        except Exception as e:
-            st.error(f"❌ Error creating output model: {str(e)}")
-            OutputModel = None
-        
-        # Process button - centered
-        process_button_col = st.columns([1, 2, 1])[1]
-        with process_button_col:
-            process_button = st.button("🚀 Process Data", type="primary", 
-                                     use_container_width=True,
-                                     disabled=not api_key)
+    # Generate a schema model from the fields
+    schema_model = create_dynamic_model("OutputSchema", fields)
     
-    # Results tab
-    with tab3:
-        # This tab will be filled with results after processing
-        if 'results_df' not in st.session_state:
-            st.info("Process your data to see results here")
+    # Process data when the button is clicked
+    if 'results_df' not in st.session_state:
+        st.session_state.results_df = None
     
-    # Process data when button is clicked
-    use_threading = st.checkbox("Use threaded processing", value=False, 
-                          help="Disable for debugging if you encounter issues")
-    test_only_first_row = st.checkbox("Test with only first row", value=True)
+    query_mode = input_mode == "Write Query" and query_text
+    file_mode = uploaded_file is not None
     
-    if process_button and api_key:
-        try:
-            if df is not None and not df.empty:
-                # Process the uploaded data
-                with st.spinner("Processing posts..."):
-                    # Save the fields to session state before processing
-                    st.session_state['current_processing_fields'] = fields.copy()
-                    
-                    # Create the output model
-                    OutputModel = create_dynamic_model("OutputModel", fields)
-                    
-                    # Process the data
-                    results_df = process_data_batch(
-                        df,
-                        prompt_text,
-                        llm,
-                        OutputModel,
-                        use_threading=use_threading,
-                        test_only_first_row=test_only_first_row
-                    )
+    if analyze_button and (file_mode or query_mode):
+        if file_mode and df is not None and df.shape[0] > 0:
+            with st.spinner("Processing data..."):
+                # Process the data using the configured LLM
+                start_time = time.time()
+                results = process_data_batch(
+                    df, 
+                    prompt_template, 
+                    llm, 
+                    schema_model, 
+                    n_workers,
+                    image_data,
+                    image_path_columns,
+                    image_detail
+                )
+                
+                # Check if any results were returned
+                if results:
+                    # Convert results to DataFrame
+                    results_df = pd.DataFrame(results)
                     
                     # Store in session state
-                    st.session_state['results_df'] = results_df
-                    st.session_state['fields'] = fields.copy()
+                    st.session_state.results_df = results_df
                     
-                    # Set active tab to Results (index 2)
-                    st.session_state.active_tab = 2
-                    
-                    # Notify completion
-                    st.container().success("✅ Processing complete! Navigate to the Results tab to see the analysis.")
-                    st.rerun()
-                    
-            else:
-                st.error("No data to process. Please upload a CSV file or write a query.")
+                    # Show processing time
+                    elapsed_time = time.time() - start_time
+                    st.success(f"✅ Processed {len(results)} items in {elapsed_time:.2f} seconds")
+                else:
+                    st.error("No results were generated. Check your data and try again.")
+        elif query_mode:
+            with st.spinner("Processing query..."):
+                # Create a single row DataFrame from the query
+                df = pd.DataFrame([{"query": query_text}])
                 
-        except Exception as e:
-            st.error(f"Error during processing: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc(), language="python")
+                # Process the data using the configured LLM
+                start_time = time.time()
+                results = process_data_batch(
+                    df, 
+                    prompt_template, 
+                    llm, 
+                    schema_model, 
+                    n_workers,
+                    image_data,
+                    image_path_columns,
+                    image_detail
+                )
+                
+                # Check if any results were returned
+                if results:
+                    # Convert results to DataFrame
+                    results_df = pd.DataFrame(results)
+                    
+                    # Store in session state
+                    st.session_state.results_df = results_df
+                    
+                    # Show processing time
+                    elapsed_time = time.time() - start_time
+                    st.success(f"✅ Processed query in {elapsed_time:.2f} seconds")
+                else:
+                    st.error("No results were generated. Try adjusting your query and try again.")
+        else:
+            st.error("Please upload a file with data or enter a query first")
+    elif analyze_button:
+        st.error("Please upload a CSV file or enter a query first")
     
     # Display results if available
-    if 'results_df' in st.session_state and st.session_state['results_df'] is not None:
-        with tab3:
-            # Display any errors
-            display_errors(st.session_state['results_df'])
-            
-            # Look for debug info
-            if '_debug_info' in st.session_state['results_df'].columns:
-                with st.expander("🔍 Debug Information", expanded=False):
-                    sample_debug = st.session_state['results_df']['_debug_info'].iloc[0]
-                    st.json(sample_debug)
-            
-            # Display results
-            display_results(st.session_state['results_df'], st.session_state['fields'])
-            
-            # Create visualizations
-            create_visualizations(st.session_state['results_df'], st.session_state['fields'])
-
+    if st.session_state.results_df is not None:
+        display_results(st.session_state.results_df, fields)
+        create_visualizations(st.session_state.results_df, fields)
+    
 if __name__ == "__main__":
     main()

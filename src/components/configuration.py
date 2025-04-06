@@ -16,11 +16,44 @@ def render_sidebar_config():
                                help="Your OpenAI API key is required to use the language models")
         
         st.markdown("#### 🤖 Model Settings")
-        model_name = st.selectbox("LLM Model", ["gpt-4o-2024-08-06",
-                                                "gpt-4o-mini-2024-07-18",
-                                                "gpt-4", 
-                                                "gpt-3.5-turbo", 
-                                                "chatgpt-4o-latest"], index=2)
+        
+        # Define model options with information about multimodal support
+        model_options = [
+            {"name": "gpt-4o-2024-08-06", "multimodal": True, "description": "Latest GPT-4o with multimodal capabilities"},
+            {"name": "gpt-4o-mini-2024-07-18", "multimodal": True, "description": "Mini version of GPT-4o with multimodal capabilities"},
+            {"name": "gpt-4", "multimodal": False, "description": "Powerful but text-only model"},
+            {"name": "gpt-3.5-turbo", "multimodal": False, "description": "Faster text-only model"},
+            {"name": "chatgpt-4o-latest", "multimodal": True, "description": "Latest GPT-4o release with multimodal capabilities"},
+        ]
+        
+        # Format the model options for display
+        model_display_names = [f"{'🖼️ ' if model['multimodal'] else '📝 '}{model['name']}" for model in model_options]
+        model_names = [model["name"] for model in model_options]
+        
+        selected_display_name = st.selectbox("LLM Model", model_display_names, index=0,
+                                           help="Models with 🖼️ support image input for multimodal analysis")
+        
+        # Extract the actual model name from the selection
+        selected_index = model_display_names.index(selected_display_name)
+        model_name = model_names[selected_index]
+        
+        # Show multimodal information if a multimodal model is selected
+        is_multimodal = model_options[selected_index]["multimodal"]
+        if is_multimodal:
+            st.success("✅ Selected model supports multimodal (text + image) input")
+            
+            # Add image detail level option for multimodal models
+            st.markdown("#### 🖼️ Image Settings")
+            image_detail = st.selectbox(
+                "Image Detail Level", 
+                ["high", "low"], 
+                index=0,
+                help="High: Better image analysis with higher token usage. Low: More efficient with lower token usage."
+            )
+        else:
+            st.warning("⚠️ Selected model is text-only and does not support image input")
+            # Set default image detail level for non-multimodal models
+            image_detail = "low"
         
         model_options_col1, model_options_col2 = st.columns(2)
         with model_options_col1:
@@ -35,10 +68,18 @@ def render_sidebar_config():
         if api_key:
             os.environ["OPENAI_API_KEY"] = api_key
             try:
+                # Create model_kwargs dictionary for additional parameters
+                model_kwargs = {}
+                if is_multimodal:
+                    # The detail parameter is no longer supported by the OpenAI API
+                    # Keeping image_detail for backward compatibility with other parts of the code
+                    pass
+                
                 llm = ChatOpenAI(
                     model=model_name,
                     temperature=temperature,
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens,
+                    model_kwargs=model_kwargs
                 )
                 st.success("✅ Model initialized")
             except Exception as e:
@@ -46,7 +87,7 @@ def render_sidebar_config():
         else:
             st.warning("⚠️ Please enter your OpenAI API key")
     
-    return llm, api_key
+    return llm, api_key, image_detail if is_multimodal else None
 
 def render_analysis_config():
     """Render the analysis configuration section."""
@@ -54,6 +95,16 @@ def render_analysis_config():
     
     # Prompt Configuration
     st.subheader("Prompt Configuration")
+    
+    # Inform users about multimodal capabilities
+    st.info("""
+    🖼️ **Multimodal Support**: 
+    
+    - If you specified image path columns, the system will automatically load images from those paths for each row.
+    - If you uploaded a single image, it will be used for all rows in your dataset.
+    
+    The prompt below will be sent along with any images to multimodal-capable models.
+    """)
     
     # Improved prompt template with simpler format
     prompt_text = st.text_area(
@@ -68,18 +119,21 @@ Please provide the following analysis:
 - Key themes or topics
 - Target audience
 - Engagement potential (high, medium, low)
+
+If there's an image included with this post, analyze the visual content and how it relates to the text.
 """
     )
     
     # Schema Builder
     st.subheader("Output Schema")
     
-    # Default fields
+    # Default fields with image analysis field
     default_fields = [
         {"key": "sentiment", "type": "enum", "description": "The sentiment of the post", "options": ["positive", "negative", "neutral"]},
         {"key": "themes", "type": "str", "description": "Main themes in the post separated by commas"},
         {"key": "target_audience", "type": "str", "description": "Description of the target audience"},
-        {"key": "engagement_potential", "type": "enum", "description": "Expected engagement level", "options": ["high", "medium", "low"]}
+        {"key": "engagement_potential", "type": "enum", "description": "Expected engagement level", "options": ["high", "medium", "low"]},
+        {"key": "image_description", "type": "str", "description": "Description of the image content if an image is included"}
     ]
     
     # Initialize schema fields in session state if not present

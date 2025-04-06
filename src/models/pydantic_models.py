@@ -1,5 +1,5 @@
 from typing import Literal, Dict, Any, Type, List, Optional
-from langchain.pydantic_v1 import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model
 
 def create_dynamic_model(name: str, fields: list[dict[str, Any]]) -> Type[BaseModel]:
     """
