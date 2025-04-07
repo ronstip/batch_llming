@@ -137,8 +137,8 @@ def render_sidebar_config():
         n_workers = st.slider(
             "Concurrent Workers", 
             min_value=1, 
-            max_value=5, 
-            value=2,
+            max_value=40, 
+            value=5,
             help="Number of concurrent workers for processing data. Higher values may process faster but could hit rate limits."
         )
         st.caption("Adjust based on your API rate limits")
