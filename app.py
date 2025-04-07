@@ -601,7 +601,9 @@ def main():
                             st.metric(label="High Engagement", value=f"{high_percent:.1f}%")
                     
                     with col3:
-                        st.metric(label="Processing Time", value=f"{results_df['_debug_info'].apply(lambda x: x.get('start_time', 0)).mean():.2f}s/post")
+                        st.metric(label="Processing Time", value=f"{results_df['_debug_info'].apply(lambda x: x.get('start_time', 0)).mean()/1000000000:.2f}s/post")
+                        # total processing time
+                        st.metric(label="Total Processing Time", value=f"{results_df['_debug_info'].apply(lambda x: x.get('end_time', 0) - x.get('start_time', 0)).sum()/-1000000000:.2f}s")
                     
                     # Auto-switch to Results tab
                     st.markdown('<script>var tab_btn = parent.window.document.querySelectorAll(".stTabs button")[1]; tab_btn.click();</script>', unsafe_allow_html=True)
