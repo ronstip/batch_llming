@@ -10,35 +10,68 @@ def render_sidebar_config():
     with st.sidebar:
         st.header("Configuration")
         
-        # API key input with clear instructions
+        # API key input with clear instructions and visual cues
         st.markdown("#### 🔑 API Configuration")
-        api_key = st.text_input("OpenAI API Key", type="password", 
-                               help="Your OpenAI API key is required to use the language models")
+        api_key_container = st.container()
+        
+        with api_key_container:
+            api_key = st.text_input(
+                "OpenAI API Key", 
+                type="password", 
+                help="Your OpenAI API key is required to use the language models",
+                placeholder="sk-..."
+            )
+            
+            # Visual indicator for API key status
+            if api_key:
+                if api_key.startswith('sk-') and len(api_key) > 20:
+                    st.success("✅ API key format is valid")
+                else:
+                    st.error("❌ API key format appears invalid. It should start with 'sk-'")
+            else:
+                st.info("ℹ️ Enter your OpenAI API key to get started")
         
         st.markdown("#### 🤖 Model Settings")
         
-        # Define model options with information about multimodal support
+        # Enhanced model options with better information about capabilities
         model_options = [
-            {"name": "gpt-4o-2024-08-06", "multimodal": True, "description": "Latest GPT-4o with multimodal capabilities"},
-            {"name": "gpt-4o-mini-2024-07-18", "multimodal": True, "description": "Mini version of GPT-4o with multimodal capabilities"},
-            {"name": "gpt-4", "multimodal": False, "description": "Powerful but text-only model"},
-            {"name": "gpt-3.5-turbo", "multimodal": False, "description": "Faster text-only model"},
-            {"name": "chatgpt-4o-latest", "multimodal": True, "description": "Latest GPT-4o release with multimodal capabilities"},
+            {"name": "gpt-4o-2024-08-06", "multimodal": True, "description": "Latest GPT-4o with multimodal capabilities", "tokens": "High token limit"},
+            {"name": "gpt-4o-mini-2024-07-18", "multimodal": True, "description": "Mini version of GPT-4o with multimodal capabilities", "tokens": "Medium token limit"},
+            {"name": "gpt-4", "multimodal": False, "description": "Powerful but text-only model", "tokens": "High token limit"},
+            {"name": "gpt-3.5-turbo", "multimodal": False, "description": "Faster text-only model", "tokens": "Medium token limit"},
+            {"name": "chatgpt-4o-latest", "multimodal": True, "description": "Latest GPT-4o release with multimodal capabilities", "tokens": "High token limit"},
         ]
         
-        # Format the model options for display
-        model_display_names = [f"{'🖼️ ' if model['multimodal'] else '📝 '}{model['name']}" for model in model_options]
+        # Format the model options for display with more info
+        model_display_names = [f"{'🖼️ ' if model['multimodal'] else '📝 '}{model['name']} - {model['tokens']}" for model in model_options]
         model_names = [model["name"] for model in model_options]
         
-        selected_display_name = st.selectbox("LLM Model", model_display_names, index=0,
-                                           help="Models with 🖼️ support image input for multimodal analysis")
+        selected_display_name = st.selectbox(
+            "LLM Model", 
+            model_display_names, 
+            index=0,
+            help="Models with 🖼️ support image input for multimodal analysis"
+        )
         
         # Extract the actual model name from the selection
         selected_index = model_display_names.index(selected_display_name)
         model_name = model_names[selected_index]
+        selected_model = model_options[selected_index]
+        
+        # Show model details in an expander
+        with st.expander("Model Details"):
+            st.markdown(f"**Selected Model:** {model_name}")
+            st.markdown(f"**Description:** {selected_model['description']}")
+            st.markdown(f"**Multimodal Support:** {'Yes ✅' if selected_model['multimodal'] else 'No ❌'}")
+            st.markdown(f"**Token Capacity:** {selected_model['tokens']}")
+            
+            if selected_model['multimodal']:
+                st.markdown("**Capabilities:** Can analyze both text and images")
+            else:
+                st.markdown("**Capabilities:** Text analysis only")
         
         # Show multimodal information if a multimodal model is selected
-        is_multimodal = model_options[selected_index]["multimodal"]
+        is_multimodal = selected_model["multimodal"]
         if is_multimodal:            
             # Add image detail level option for multimodal models
             st.markdown("#### 🖼️ Image Settings")
@@ -53,15 +86,27 @@ def render_sidebar_config():
             # Set default image detail level for non-multimodal models
             image_detail = "low"
         
+        st.markdown("#### ⚙️ Advanced Settings")
         model_options_col1, model_options_col2 = st.columns(2)
         with model_options_col1:
-            temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1, 
-                                  help="Higher values make output more random, lower values more deterministic")
+            temperature = st.slider(
+                "Temperature", 
+                0.0, 1.0, 0.7, 0.1, 
+                help="Higher values make output more random, lower values more deterministic"
+            )
+            st.caption("↑ Creativity vs Consistency ↓")
         with model_options_col2:
-            max_tokens = st.number_input("Max Tokens", min_value=100, max_value=4000, value=1000, step=100,
-                                       help="Maximum number of tokens in the response")
+            max_tokens = st.number_input(
+                "Max Tokens", 
+                min_value=100, 
+                max_value=4000, 
+                value=1000, 
+                step=100,
+                help="Maximum number of tokens in the response"
+            )
+            st.caption("Response size limit")
         
-        # Initialize model if API key is provided
+        # Initialize model if API key is provided with better error handling
         llm = None
         if api_key:
             os.environ["OPENAI_API_KEY"] = api_key
@@ -73,19 +118,32 @@ def render_sidebar_config():
                     # Keeping image_detail for backward compatibility with other parts of the code
                     pass
                 
-                llm = ChatOpenAI(
-                    model=model_name,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    model_kwargs=model_kwargs
-                )
-                st.success("✅ Model initialized")
+                with st.spinner("Initializing model..."):
+                    llm = ChatOpenAI(
+                        model=model_name,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        model_kwargs=model_kwargs
+                    )
+                    st.success("✅ Model initialized successfully")
             except Exception as e:
                 st.error(f"Failed to initialize model: {str(e)}")
+                st.info("Common issues: Invalid API key, network problems, or model availability. Please check your API key and try again.")
         else:
-            st.warning("⚠️ Please enter your OpenAI API key")
+            st.warning("⚠️ Please enter your OpenAI API key to proceed")
+            
+        # Add a section for batch processing settings
+        st.markdown("#### ⚡ Performance Settings")
+        n_workers = st.slider(
+            "Concurrent Workers", 
+            min_value=1, 
+            max_value=5, 
+            value=2,
+            help="Number of concurrent workers for processing data. Higher values may process faster but could hit rate limits."
+        )
+        st.caption("Adjust based on your API rate limits")
     
-    return llm, api_key, image_detail if is_multimodal else None
+    return llm, api_key, image_detail if is_multimodal else None, n_workers
 
 def render_analysis_config():
     """Render the analysis configuration section."""
@@ -198,33 +256,8 @@ Title: {title}
             
             # Clear previous results when schema changes
             if 'results_df' in st.session_state:
-                del st.session_state['results_df']
+                st.session_state.results_df = None
+                st.session_state.raw_results = None
             
-            # Force a rerun to update the UI
-            st.rerun()
-    
-    # Check if we need to rerun after removing fields
-    if st.session_state.get('need_rerun', False):
-        st.session_state.need_rerun = False
-        st.rerun()
-    
-    # Use the current fields from session state and ensure we're using a copy
-    fields = st.session_state.schema_fields.copy()
-    
-    # Force a session state update when fields change
-    if 'fields_hash' not in st.session_state:
-        st.session_state.fields_hash = ""
-    
-    # Create a hash of the current fields to detect changes
-    current_fields_hash = json.dumps(fields)
-    if current_fields_hash != st.session_state.fields_hash:
-        st.session_state.fields_hash = current_fields_hash
-        # Clear previous results when schema changes
-        if 'results_df' in st.session_state:
-            del st.session_state['results_df']
-    
-    # Display JSON representation in an expander
-    with st.expander("JSON Representation"):
-        st.code(json.dumps(fields, indent=2), language="json")
-    
-    return prompt_text, fields 
+    # Return the prompt template and schema fields
+    return prompt_text, st.session_state.schema_fields 

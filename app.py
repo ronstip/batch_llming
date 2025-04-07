@@ -27,7 +27,7 @@ except ImportError:
 from src.components.data_input import render_data_input
 from src.components.configuration import render_sidebar_config, render_analysis_config
 from src.models.pydantic_models import create_dynamic_model
-from src.utils.processing import process_data_batch, load_image_from_path
+from src.utils.processing import process_data_batch, load_image_from_path, process_post
 from src.utils.styles import apply_custom_css
 from src.visualizations.display import display_results, create_visualizations, display_errors
 
@@ -36,217 +36,6 @@ st.set_page_config(page_title="Social Media Post Analyzer", layout="wide")
 
 # Apply custom CSS
 apply_custom_css()
-
-# Create dynamic pydantic model
-def create_dynamic_model(name: str, fields: list[dict[str, Any]]) -> Type[BaseModel]:
-    """
-    Create a dynamic Pydantic model using langchain's pydantic_v1.
-
-    Args:
-        name: Name of the model.
-        fields: A list of dictionaries, each with 'key', 'type', and 'description'.
-                If type is 'enum', provide 'options' as a list of values.
-
-    Returns:
-        A dynamically created Pydantic model class.
-    """
-    annotations: Dict[str, tuple] = {}
-
-    for field in fields:
-        key = field['key']
-        field_type = field['type']
-        description = field['description']
-
-        if field_type == "str":
-            annotations[key] = (str, Field(..., description=description))
-        elif field_type == "int":
-            annotations[key] = (int, Field(..., description=description))
-        elif field_type == "float":
-            annotations[key] = (float, Field(..., description=description))
-        elif field_type == 'enum':
-            options = field.get('options')
-            if not options:
-                raise ValueError(f"Enum field '{key}' must have 'options'.")
-            annotations[key] = (Literal[tuple(options)], Field(..., description=description))
-        else:
-            raise TypeError(f"Unsupported type: {field_type}")
-
-    return create_model(name, **annotations)
-
-def process_post(row, prompt_template, model, output_model, image_data=None, image_path_columns=None):
-    try:
-        # Create a log dictionary to capture each step
-        debug_info = {}
-        
-        # Extract values from the row as strings
-        post_values = {k: str(v) if v is not None else "" for k, v in row.to_dict().items()}
-        debug_info["post_values"] = post_values
-        
-        # Format the prompt with the post values
-        try:
-            formatted_prompt = prompt_template.format(**post_values)
-            debug_info["formatted_prompt"] = formatted_prompt
-        except Exception as format_err:
-            debug_info["format_error"] = str(format_err)
-            raise format_err
-        
-        # Determine image to use - prioritize image_path_columns if provided
-        row_image_data = None
-        
-        # Check if we have image path columns and try to load the first valid image
-        if image_path_columns:
-            debug_info["image_path_columns"] = image_path_columns
-            for col in image_path_columns:
-                if col in post_values and post_values[col].strip():
-                    image_path = post_values[col]
-                    debug_info["image_path_attempted"] = image_path
-                    
-                    # Try to load the image from the path
-                    row_image_data = load_image_from_path(image_path)
-                    if row_image_data:
-                        debug_info["image_loaded_from_path"] = image_path
-                        break
-        
-        # If no image was loaded from paths, use the global image_data if available
-        if not row_image_data and image_data:
-            row_image_data = image_data
-            debug_info["using_global_image"] = True
-        
-        # Create a chat prompt template based on whether we have an image
-        if row_image_data:
-            # Create a multimodal message with image
-            content = [
-                {"type": "text", "text": formatted_prompt}
-            ]
-            
-            # Add image as content part
-            content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{row_image_data['type']};base64,{row_image_data['base64']}"
-                }
-            })
-            
-            # Create a multimodal message
-            message = HumanMessage(content=content)
-            
-            # Create chat prompt with multimodal content
-            prompt = ChatPromptTemplate.from_messages([message])
-            debug_info["prompt_type"] = "multimodal"
-        else:
-            # Standard text-only prompt
-            prompt = ChatPromptTemplate.from_messages([
-                ("human", formatted_prompt)
-            ])
-            debug_info["prompt_type"] = "text-only"
-            
-        debug_info["prompt_created"] = True
-        
-        # Check if model is None
-        if model is None:
-            raise ValueError("Model is None - API key may not be set correctly")
-        debug_info["model_available"] = True
-        
-        # Log model type
-        debug_info["model_type"] = str(type(model))
-        
-        # Verify output_model
-        debug_info["output_model_type"] = str(type(output_model))
-        debug_info["output_model_schema"] = output_model.schema()
-        
-        # Call the LLM with structured output
-        try:
-            chain = prompt | model.with_structured_output(output_model)
-            debug_info["chain_created"] = True
-            
-            result = chain.invoke({})
-            debug_info["llm_result_received"] = True
-            
-            # Convert pydantic model to dict
-            parsed_result = result.dict()
-            debug_info["parsed_result"] = True
-        except Exception as llm_err:
-            debug_info["llm_error"] = str(llm_err)
-            raise llm_err
-        
-        # Add the original post data to the result
-        for key, value in post_values.items():
-            parsed_result[f"original_{key}"] = value
-        
-        # Add debug info to result
-        parsed_result["_debug_info"] = debug_info
-                
-        return parsed_result
-        
-    except Exception as e:
-        error_msg = f"Error processing post: {str(e)}"
-        st.error(error_msg)
-        
-        # Return error with details
-        return {
-            "error": str(e),
-            "error_type": str(type(e)),
-            "traceback": traceback.format_exc()
-        }
-
-# Function to create visualizations based on field types
-def create_visualizations(df, fields):
-    st.subheader("Visualizations")
-    
-    # Skip if DataFrame is empty
-    if df.empty:
-        st.warning("No data to visualize")
-        return
-    
-    # Get all field keys that should be in the current results
-    field_keys = [field['key'] for field in fields]
-    available_fields = [field for field in fields if field['key'] in df.columns]
-    
-    # If no fields to visualize, show a message
-    if not available_fields:
-        st.warning("No fields to visualize in the current results")
-        return
-    
-    # Create columns for visualizations
-    viz_cols = st.columns(2)
-    
-    col_index = 0
-    
-    for field in available_fields:
-        field_key = field['key']
-        field_type = field['type']
-        
-        try:
-            with viz_cols[col_index % 2]:
-                if field_type == 'enum' or field_type == 'str':
-                    # Bar chart for categorical data
-                    st.subheader(f"{field_key} Distribution")
-                    value_counts = df[field_key].value_counts().reset_index()
-                    value_counts.columns = [field_key, 'count']
-                    
-                    fig, ax = plt.subplots(figsize=(8, 5))
-                    sns.barplot(data=value_counts, x=field_key, y='count', ax=ax)
-                    plt.xticks(rotation=45, ha='right')
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                    
-                elif field_type == 'int' or field_type == 'float':
-                    # Histogram for numerical data
-                    st.subheader(f"{field_key} Distribution")
-                    fig, ax = plt.subplots(figsize=(8, 5))
-                    sns.histplot(df[field_key], kde=True, ax=ax)
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                    
-                    # Also show basic statistics
-                    st.write(f"Mean: {df[field_key].mean():.2f}")
-                    st.write(f"Median: {df[field_key].median():.2f}")
-                    st.write(f"Min: {df[field_key].min():.2f}")
-                    st.write(f"Max: {df[field_key].max():.2f}")
-                
-                col_index += 1
-        except Exception as e:
-            st.error(f"Error visualizing {field_key}: {str(e)}")
 
 def load_and_resize_image(image_path, max_width=120):
     """Load an image from path and resize it to create a thumbnail with caching for performance"""
@@ -676,323 +465,184 @@ def get_image_base64(image_path, max_width=120):
         print(f"Error encoding image {image_path}: {e}")
         return ""
 
+def display_errors(error_rows):
+    """Display errors from the results dataframe"""
+    if not error_rows.empty:
+        st.subheader("❌ Processing Errors")
+        st.error(f"{len(error_rows)} items failed to process. Showing details below.")
+        
+        for i, (_, row) in enumerate(error_rows.iterrows()):
+            with st.expander(f"Error {i+1}: {row.get('error_type', 'Unknown error')}"):
+                st.write(f"**Error message:** {row.get('error', 'No error message available')}")
+                
+                if 'traceback' in row:
+                    st.code(row['traceback'], language="python")
+
 # Main app
 def main():
-    # Apply custom CSS
-    apply_custom_css()
-    
-    # App header with logo and description
-    st.markdown("""
-    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-        <div style="font-size: 2.5rem; margin-right: 0.5rem;">🔄</div>
-        <div>
-            <h1 style="margin: 0; padding: 0;">Batch LLM Processing</h1>
-            <p style="margin: 0; color: #666;">Process multiple inputs using LLMs with structured outputs & image analysis</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Initialize session state variables
-    if 'llm_initialized' not in st.session_state:
-        st.session_state.llm_initialized = False
+    # Initialize session state for results
     if 'results_df' not in st.session_state:
-        st.session_state.results_df = pd.DataFrame()  # Initialize as empty DataFrame instead of None
-    if 'processing' not in st.session_state:
-        st.session_state.processing = False
-    if 'error_message' not in st.session_state:
-        st.session_state.error_message = None
+        st.session_state.results_df = None
     
-    # Sidebars and configuration
-    llm, api_key, image_detail = render_sidebar_config()
+    if 'raw_results' not in st.session_state:
+        st.session_state.raw_results = None
     
-    # Make sure LLM is initialized with better error messaging
-    if not api_key:
-        st.warning("⚠️ Please enter your OpenAI API key in the sidebar to continue")
-        # Show helpful instructions
-        st.info("""
-        ### Getting Started
-        1. Enter your OpenAI API key in the sidebar
-        2. Upload a CSV file or write a query
-        3. Configure your prompt and output schema
-        4. Click 'Analyze Data' to process
-        """)
-        st.stop()
+    if 'schema_fields' not in st.session_state:
+        st.session_state.schema_fields = []
+        
+    if 'need_rerun' not in st.session_state:
+        st.session_state.need_rerun = False
+        
+    if 'image_path_columns' not in st.session_state:
+        st.session_state.image_path_columns = []
     
-    st.session_state.llm_initialized = llm is not None
+    # Create tabs for different sections
+    tab1, tab2 = st.tabs(["Analysis", "Results"])
     
-    if not st.session_state.llm_initialized:
-        st.error("❌ Language model initialization failed. Please check your API key and selected model.")
-        st.stop()
+    # Sidebar config
+    llm, api_key, image_detail, n_workers = render_sidebar_config()
     
-    # Create tabs for different sections of the app
-    input_tab, config_tab, analyze_tab, results_tab = st.tabs(["Data Input", "Analysis Configuration", "Analyze Data", "Results & Insights"])
-    
-    with input_tab:
-        # Load data input component
+    # Main content
+    with tab1:
+        # Data input
         uploaded_file, df, image_data, image_path_columns, input_mode, query_text = render_data_input()
-        st.session_state.image_path_columns = image_path_columns
         
-        # Show image data status
-        if image_data:
-            st.success("✅ Global image loaded successfully and will be used for all rows")
-        
+        # Store image_path_columns in session state
         if image_path_columns:
-            st.success(f"✅ Image path columns selected: {', '.join(image_path_columns)}")
-    
-    with config_tab:
-        # Load configuration components
-        prompt_template, fields = render_analysis_config()
+            st.session_state.image_path_columns = image_path_columns
         
-        # Generate schema model from fields
-        schema_model = create_dynamic_model("OutputSchema", fields)
+        # Prompt and schema configuration
+        prompt_text, schema_fields = render_analysis_config()
         
-        # Preview the schema in a cleaner format
-        with st.expander("📋 Preview Generated Schema", expanded=False):
-            schema_json = schema_model.schema()
-            st.json(schema_json)
-            
-    with analyze_tab:
-        st.header("Analysis Controls")
+        # Create a dynamic output model
+        output_model = None
+        if schema_fields:
+            try:
+                output_model = create_dynamic_model("SocialMediaAnalysis", schema_fields)
+            except Exception as e:
+                st.error(f"Error creating output model: {str(e)}")
         
-        # Process button and worker selection in a clean layout
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            # Number of workers selection with better UI
-            n_workers = st.number_input(
-                "Parallel Workers", 
-                min_value=1, 
-                max_value=40, 
-                value=10,
-                help="Higher values process faster but use more resources"
+        # Process button
+        process_col1, process_col2 = st.columns([3, 1])
+        
+        with process_col1:
+            process_placeholder = st.empty()
+            process_button = process_placeholder.button(
+                "🚀 Process Data", 
+                type="primary",
+                use_container_width=True,
+                disabled=(llm is None or df is None or df.empty or output_model is None)
             )
-            
-        with col1:
-            # Improved analyze button with status indication
-            if st.session_state.processing:
-                analyze_button = st.button(
-                    "⏳ Processing...", 
-                    type="primary", 
-                    disabled=True,
-                    use_container_width=True
-                )
-            else:
-                analyze_button = st.button(
-                    "🚀 Analyze Data", 
-                    type="primary", 
-                    use_container_width=True
-                )
         
-        # Display errors from processing if they exist
-        if hasattr(st.session_state, 'has_errors') and st.session_state.has_errors:
-            st.markdown("---")
-            st.subheader("⚠️ Processing Errors")
-            
-            if hasattr(st.session_state, 'error_results') and st.session_state.error_results:
-                st.warning(f"{len(st.session_state.error_results)} items failed to process properly.")
+        with process_col2:
+            # Clear results button
+            if st.button("🧹 Clear Results", use_container_width=True):
+                st.session_state.results_df = None
+                st.session_state.raw_results = None
+                st.rerun()
+    
+        # Check if conditions are met for processing
+        if not llm and process_button:
+            st.error("Please enter a valid OpenAI API key in the sidebar first.")
+        
+        if not df is not None and process_button:
+            st.error("Please upload a CSV file first.")
+        
+        if not output_model and process_button:
+            st.error("Please configure the output schema first.")
+    
+        # Process data when button is clicked
+        if process_button and llm and df is not None and not df.empty and output_model:
+            # Process the data
+            with st.spinner("Processing data..."):
+                try:
+                    # Use prompt template with dynamic fields
+                    prompt_template = prompt_text
+                    
+                    # Process the data in batches
+                    results = process_data_batch(
+                        df, 
+                        prompt_template, 
+                        llm, 
+                        output_model, 
+                        n_workers=n_workers,  # Use the user-configured number of workers
+                        image_data=image_data, 
+                        image_path_columns=image_path_columns,
+                        image_detail=image_detail
+                    )
+                    
+                    # Check for errors
+                    error_count = sum(1 for result in results if 'error' in result)
+                    
+                    if error_count > 0:
+                        st.warning(f"⚠️ {error_count} out of {len(results)} items failed to process. See results for details.")
+                    
+                    # Convert results to DataFrame
+                    results_df = pd.DataFrame(results)
+                    
+                    # Store results in session state
+                    st.session_state.results_df = results_df
+                    st.session_state.raw_results = results
+                    
+                    st.success(f"✅ Successfully processed {len(results) - error_count} out of {len(results)} items.")
+                    
+                    # Display a visual summary
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if 'sentiment' in results_df.columns:
+                            positive_count = (results_df['sentiment'] == 'positive').sum()
+                            positive_percent = (positive_count / len(results_df)) * 100
+                            st.metric(label="Positive Sentiment", value=f"{positive_percent:.1f}%")
+                    
+                    with col2:
+                        if 'engagement_potential' in results_df.columns:
+                            high_count = (results_df['engagement_potential'] == 'high').sum()
+                            high_percent = (high_count / len(results_df)) * 100
+                            st.metric(label="High Engagement", value=f"{high_percent:.1f}%")
+                    
+                    with col3:
+                        st.metric(label="Processing Time", value=f"{results_df['_debug_info'].apply(lambda x: x.get('start_time', 0)).mean():.2f}s/post")
+                    
+                    # Auto-switch to Results tab
+                    st.markdown('<script>var tab_btn = parent.window.document.querySelectorAll(".stTabs button")[1]; tab_btn.click();</script>', unsafe_allow_html=True)
                 
-                with st.expander("View Error Details", expanded=False):
-                    for i, error_result in enumerate(st.session_state.error_results):
-                        st.markdown(f"**Error {i+1}:** {error_result.get('error', 'Unknown error')}")
-                        if 'traceback' in error_result:
-                            st.markdown("**Traceback:**")
-                            st.code(error_result['traceback'], language='python')
-                        st.markdown("---")
+                except Exception as e:
+                    st.error(f"Error processing data: {str(e)}")
     
-    # Handle data processing
-    query_mode = input_mode == "Write Query" and query_text
-    file_mode = uploaded_file is not None
+    # Results tab content
+    with tab2:
+        if st.session_state.results_df is not None and not st.session_state.results_df.empty:
+            # Store any image path columns for display
+            if st.session_state.image_path_columns:
+                # Get the image columns with 'original_' prefix added
+                image_path_columns = [f"original_{col}" for col in st.session_state.image_path_columns 
+                                     if f"original_{col}" in st.session_state.results_df.columns]
+                
+                # Also include the original column names if they exist
+                image_path_columns.extend([col for col in st.session_state.image_path_columns 
+                                          if col in st.session_state.results_df.columns])
+                
+                # Make sure these are passed to the display function
+                st.session_state.display_image_columns = image_path_columns
+            
+            # Display results
+            display_results(st.session_state.results_df, schema_fields)
+            
+            # Create visualizations
+            create_visualizations(st.session_state.results_df, schema_fields)
+            
+            # Display errors if any
+            if 'error' in st.session_state.results_df.columns:
+                error_rows = st.session_state.results_df[st.session_state.results_df['error'].notna()]
+                if not error_rows.empty:
+                    display_errors(error_rows)
+        else:
+            st.info("No results to display. Process data first in the Analysis tab.")
     
-    # Process when button is clicked
-    if analyze_button and (file_mode or query_mode):
-        # Set processing state for UI feedback
-        st.session_state.processing = True
-        st.session_state.error_message = None
-        
-        # Rerun to update UI immediately
+    # Check if we need to rerun the app (used when schema fields are updated)
+    if st.session_state.get('need_rerun', False):
+        st.session_state.need_rerun = False
         st.rerun()
-    
-    # Continue processing after rerun if in processing state
-    if st.session_state.processing and (file_mode or query_mode):
-        try:
-            if file_mode and df is not None and df.shape[0] > 0:
-                with st.spinner("🔄 Processing data batch..."):
-                    # Create progress components
-                    progress_col1, progress_col2 = st.columns([3, 1])
-                    with progress_col1:
-                        progress_bar = st.progress(0)
-                    with progress_col2:
-                        progress_text = st.empty()
-                    
-                    # Process the data with progress updates
-                    start_time = time.time()
-                    
-                    def progress_callback(current, total):
-                        """Callback to update progress during processing"""
-                        progress = current / total
-                        progress_bar.progress(progress)
-                        progress_text.markdown(f"**{current}/{total}** items")
-                    
-                    # Process data with progress tracking
-                    results = process_data_batch(
-                        df, 
-                        prompt_template, 
-                        llm, 
-                        schema_model, 
-                        n_workers,
-                        image_data,
-                        image_path_columns,
-                        image_detail
-                    )
-                    
-                    # Check if any results were returned
-                    if results:
-                        # Separate successful results from errors
-                        success_results = []
-                        error_results = []
-                        
-                        for result in results:
-                            if 'error' in result:
-                                error_results.append(result)
-                            else:
-                                success_results.append(result)
-                        
-                        # Convert successful results to DataFrame
-                        if success_results:
-                            results_df = pd.DataFrame(success_results)
-                            
-                            # Store in session state
-                            st.session_state.results_df = results_df
-                            st.session_state.has_errors = len(error_results) > 0
-                            st.session_state.error_results = error_results
-                        else:
-                            # All results had errors
-                            st.session_state.results_df = pd.DataFrame()
-                            st.session_state.has_errors = True
-                            st.session_state.error_results = error_results
-                            st.session_state.error_message = "All processing attempts resulted in errors. Check the error details."
-                        
-                        # Show processing time
-                        elapsed_time = time.time() - start_time
-                        time_per_item = elapsed_time / len(results)
-                        
-                        st.success(f"✅ Processed {len(results)} items in {elapsed_time:.2f} seconds ({time_per_item:.2f}s per item)")
-                        
-                        if success_results:
-                            st.success(f"Successfully processed {len(success_results)} of {len(results)} items")
-                            
-                            # Switch to results tab automatically only if we have successful results
-                            results_tab.active = True
-                        
-                        if error_results:
-                            st.warning(f"⚠️ {len(error_results)} of {len(results)} items had errors. See the 'Analyze Data' tab for details.")
-                    else:
-                        st.session_state.error_message = "No results were generated. Check your data and try again."
-                        st.error(st.session_state.error_message)
-            
-            elif query_mode:
-                with st.spinner("🔄 Processing query..."):
-                    # Create a single row DataFrame from the query
-                    df = pd.DataFrame([{"query": query_text}])
-                    
-                    # Process the query
-                    start_time = time.time()
-                    results = process_data_batch(
-                        df, 
-                        prompt_template, 
-                        llm, 
-                        schema_model, 
-                        n_workers,
-                        image_data,
-                        image_path_columns,
-                        image_detail
-                    )
-                    
-                    # Check if any results were returned
-                    if results:
-                        # Separate successful results from errors
-                        success_results = []
-                        error_results = []
-                        
-                        for result in results:
-                            if 'error' in result:
-                                error_results.append(result)
-                            else:
-                                success_results.append(result)
-                        
-                        # Convert successful results to DataFrame
-                        if success_results:
-                            results_df = pd.DataFrame(success_results)
-                            
-                            # Store in session state
-                            st.session_state.results_df = results_df
-                            st.session_state.has_errors = len(error_results) > 0
-                            st.session_state.error_results = error_results
-                        else:
-                            # All results had errors
-                            st.session_state.results_df = pd.DataFrame()
-                            st.session_state.has_errors = True
-                            st.session_state.error_results = error_results
-                            st.session_state.error_message = "All processing attempts resulted in errors. Check the error details."
-                        
-                        # Show processing time
-                        elapsed_time = time.time() - start_time
-                        time_per_item = elapsed_time / len(results)
-                        
-                        st.success(f"✅ Query processed in {elapsed_time:.2f} seconds")
-                        
-                        if success_results:
-                            st.success(f"Successfully processed {len(success_results)} of {len(results)} items")
-                            
-                            # Switch to results tab automatically only if we have successful results
-                            results_tab.active = True
-                        
-                        if error_results:
-                            st.warning(f"⚠️ {len(error_results)} of {len(results)} items had errors. See the 'Analyze Data' tab for details.")
-                    else:
-                        st.session_state.error_message = "No results were generated. Try adjusting your query and try again."
-                        st.error(st.session_state.error_message)
-        
-        except Exception as e:
-            st.session_state.error_message = f"Error during processing: {str(e)}"
-            st.error(st.session_state.error_message)
-            st.exception(e)
-        
-        finally:
-            # Reset processing state
-            st.session_state.processing = False
-    
-    # Display error message if set
-    if st.session_state.error_message:
-        with results_tab:
-            st.error(st.session_state.error_message)
-    
-    # Display results if available
-    with results_tab:
-        if hasattr(st.session_state, 'results_df') and not st.session_state.results_df.empty:
-                
-            # Display results and visualizations
-            display_results(st.session_state.results_df, fields)
-            create_visualizations(st.session_state.results_df, fields)
-        elif not st.session_state.processing and st.session_state.error_message is None:
-            # Show help message when no results are available
-            st.info("No results to display yet. Configure your analysis in the previous tabs and click 'Analyze Data'.")
-            
-            # Show sample results screenshot
-            st.markdown("""
-            ### What to expect
-            
-            After processing, you'll see:
-            
-            1. **Table View** - All analysis results in a searchable table
-            2. **Card View** - Visual cards showing analysis with images
-            3. **Image Gallery** - Browse all images in a grid layout
-            4. **Visualizations** - Charts and insights based on the analysis
-            """)
-        
-        # Display any errors embedded in the results
-        if hasattr(st.session_state, 'results_df') and not st.session_state.results_df.empty:
-            # We've moved error handling to the Analyze Data tab
-            pass
 
 if __name__ == "__main__":
     main()

@@ -25,10 +25,15 @@ def display_results(results_df, fields):
     # Detect image columns - columns that might contain image paths or image data
     image_columns = []
     
-    # First check if any fields are explicitly marked as image type
-    for field in fields:
-        if field.get('type') == 'image' and field['key'] in results_df.columns:
-            image_columns.append(field['key'])
+    # First check if any columns are explicitly passed via session state
+    if 'display_image_columns' in st.session_state and st.session_state.display_image_columns:
+        image_columns = st.session_state.display_image_columns
+    
+    # If no columns found yet, check if any fields are explicitly marked as image type
+    if not image_columns:
+        for field in fields:
+            if field.get('type') == 'image' and field['key'] in results_df.columns:
+                image_columns.append(field['key'])
     
     # Then try to auto-detect image columns if none are explicitly marked
     if not image_columns:
@@ -162,75 +167,71 @@ def display_results(results_df, fields):
         if not valid_images_found and image_columns:
             st.info("No valid images found in the data. Please verify image paths.")
     
-    # Add Gallery View if image columns exist
-    if image_columns and 'tab3' in locals():
-        with tab3:
+    # Image Gallery Tab
+    with tab3:
+        # Check for image columns in the gallery
+        if not image_columns:
+            st.info("No images available in the current dataset")
+        else:
             st.markdown("### Image Gallery")
             
-            # Let user select which image column to display
-            if len(image_columns) > 1:
-                selected_image_column = st.selectbox("Select image column to display:", image_columns)
-                image_cols_to_display = [selected_image_column]
+            # Show what image columns were detected
+            st.info(f"Found image columns: {', '.join(image_columns)}")
+            
+            # Group by image type
+            img_cols_per_page = 4
+            img_rows_per_page = 4
+            items_per_page = img_cols_per_page * img_rows_per_page
+            
+            # Get all valid image paths from the dataset
+            all_images = []
+            for _, row in results_df.iterrows():
+                for col in image_columns:
+                    if col in row:
+                        img_path = row[col]
+                        if pd.notna(img_path) and str(img_path).strip():
+                            all_images.append({
+                                'path': img_path,
+                                'column': col.replace('original_', ''),
+                                'row_idx': _
+                            })
+                            
+            if not all_images:
+                st.warning("Found image columns but no valid image paths in the data")
+                st.write("Check if your image paths are correct and accessible")
             else:
-                image_cols_to_display = image_columns
-            
-            # Allow user to select number of columns in the gallery
-            cols_per_row = st.slider("Images per row:", min_value=3, max_value=8, value=5)
-            
-            # Check if any valid images are available
-            valid_images = []
-            
-            for image_col in image_cols_to_display:
-                st.subheader(f"Gallery: {image_col}")
+                st.success(f"Found {len(all_images)} images in the dataset")
                 
-                # Collect all valid images
-                for _, data in results_df.iterrows():
-                    if image_col in data and data[image_col]:
-                        img_path = data[image_col]
-                        if is_valid_image_path(img_path):
-                            valid_images.append(img_path)
-                
-                if not valid_images:
-                    st.info(f"No valid images found in column '{image_col}'. Please check image paths or URLs.")
-                    # Show a sample of the data for debugging
-                    sample_paths = results_df[image_col].dropna().head(5).tolist()
-                    if sample_paths:
-                        st.write("Sample image paths found in data:")
-                        for path in sample_paths:
-                            st.code(path)
-                        st.write("Tips to make images work:")
-                        st.write("1. Make sure image paths are absolute or relative to your working directory")
-                        st.write("2. Verify image files exist on disk or are valid URLs")
-                        st.write("3. Supported formats: jpg, jpeg, png, gif, webp, bmp")
-                    continue
+                # Allow selecting how many columns to display
+                cols_per_row = st.slider("Images per row", min_value=2, max_value=6, value=4)
                 
                 # Create rows of images
                 rows = []
                 current_row = []
                 
-                for img_path in valid_images:
-                    current_row.append(img_path)
+                for img_info in all_images:
+                    current_row.append(img_info)
                     
                     if len(current_row) == cols_per_row:
                         rows.append(current_row)
                         current_row = []
                 
-                # Add the last incomplete row if it exists
+                # Add any remaining images
                 if current_row:
                     rows.append(current_row)
                 
-                # Display each row
+                # Display the images in rows
                 for row_images in rows:
                     cols = st.columns(cols_per_row)
-                    for i, img_path in enumerate(row_images):
+                    for i, img_info in enumerate(row_images):
                         with cols[i]:
                             try:
-                                st.image(img_path, width=100)
-                                # Get the image filename for caption
-                                caption = os.path.basename(img_path) if not img_path.startswith(('http://', 'https://')) else img_path.split('/')[-1]
-                                st.caption(caption)
+                                img_path = img_info['path']
+                                st.image(img_path, width=150)
+                                st.caption(f"Column: {img_info['column']}")
                             except Exception as e:
-                                print(f"Could not display image: {e}")
+                                st.error(f"Error displaying image: {e}")
+                                st.code(img_path, language=None)
 
 def create_visualizations(df, fields):
     """Create visualizations based on the data and field types with modern styling."""
@@ -240,6 +241,11 @@ def create_visualizations(df, fields):
     if df.empty:
         st.info("No data available for visualizations")
         return
+    
+    # Import required libraries upfront to avoid scoping issues
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from collections import Counter
     
     # Get all field keys that should be in the current results
     field_keys = [field['key'] for field in fields]
@@ -771,7 +777,6 @@ def create_visualizations(df, fields):
                     # Generate word cloud (if wordcloud library is available)
                     try:
                         from wordcloud import WordCloud
-                        import matplotlib.pyplot as plt
                         
                         wordcloud = WordCloud(
                             width=800, height=400,
